@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.hashers import make_password
 from .models import User, Student, AttendanceRecord, AttendanceDetail
+from .views.utils import sync_pickle_with_database
 
 # Inline for Student within UserAdmin
 class StudentInline(admin.StackedInline):
@@ -32,27 +33,33 @@ class UserAdmin(BaseUserAdmin):
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
     )
     
-    readonly_fields = ('password',)  # Keeps password read-only in edit mode
+    readonly_fields = ('password',)
     
-    # Add custom actions
     actions = ['reset_passwords']
 
     def reset_passwords(self, request, queryset):
-        """
-        Reset passwords for selected users to a default value (e.g., 'newpassword123').
-        """
-        default_password = 'newpassword123'  # Customize this as needed
+        default_password = 'newpassword123'
         updated = queryset.update(password=make_password(default_password))
         self.message_user(request, f"Successfully reset passwords for {updated} users to '{default_password}'.")
     reset_passwords.short_description = "Reset selected users' passwords to 'newpassword123'"
 
-# Register other models as before
+# Register Student with sync functionality
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = ('name', 'usn', 'semester', 'section', 'user')
     list_filter = ('semester', 'section')
     search_fields = ('name', 'usn')
     fields = ('name', 'usn', 'semester', 'section', 'user')
+
+    def delete_model(self, request, obj):
+        """Override to sync pickle file after single deletion."""
+        super().delete_model(request, obj)
+        sync_pickle_with_database()
+
+    def delete_queryset(self, request, queryset):
+        """Override to sync pickle file after bulk deletion."""
+        super().delete_queryset(request, queryset)
+        sync_pickle_with_database()
 
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(admin.ModelAdmin):

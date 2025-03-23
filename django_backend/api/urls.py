@@ -12,11 +12,15 @@ urlpatterns = [
     path('student-attendance/', student_views.get_student_attendance, name='get_student_attendance'),
 
     # Admin endpoints
-    path('enroll/', admin_views.enroll_student, name='enroll_student'),
+    # Removed 'enroll/' from admin_views; moved to faculty_views below
 
     # Faculty endpoints
     path('take-attendance/', faculty_views.take_attendance, name='take_attendance'),
-
+    path('enroll/', faculty_views.enroll, name='enroll_student'),
+    path('generate-statistics/', faculty_views.generate_statistics, name='generate_statistics'),
+    path('download-pdf/<str:filename>/', faculty_views.download_pdf, name='download_pdf'),  # Moved to faculty_views
+    path('students/', faculty_views.get_students, name='get_students'),
+    
     # HOD endpoints
     path('subjects/', hod_views.get_subjects, name='get_subjects'),
     path('attendance-files/', hod_views.get_attendance_files, name='get_attendance_files'),

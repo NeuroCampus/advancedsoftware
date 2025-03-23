@@ -108,7 +108,7 @@ CORS_ALLOW_ALL_ORIGINS = True  # Restrict in production
 
 # Custom settings from VisionX
 STUDENT_DATA_PATH = os.path.join(BASE_DIR, 'student_data')
-PICKLE_FILE = os.path.join(STUDENT_DATA_PATH, 'encodings.pkl')
+PICKLE_FILE = os.path.join(STUDENT_DATA_PATH, 'students.pkl')
 GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 os.makedirs(STUDENT_DATA_PATH, exist_ok=True)
 

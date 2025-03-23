@@ -10,7 +10,7 @@ import { motion } from 'framer-motion';
 
 const TakeAttendancePage: React.FC = () => {
   const navigate = useNavigate();
-  const { semester, section, subject, token } = useUser();
+  const { semester, section, subject, token, role, logout } = useUser(); // Added role and logout
   const [photos, setPhotos] = useState<File[]>([]);
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [showCamera, setShowCamera] = useState(false);
@@ -64,7 +64,13 @@ const TakeAttendancePage: React.FC = () => {
       return;
     }
     if (!token) {
-      setResult({ success: false, message: 'You must be logged in to take attendance' });
+      setResult({ success: false, message: 'Session expired. Please log in again.' });
+      logout();
+      navigate('/login');
+      return;
+    }
+    if (role !== 'teacher') {
+      setResult({ success: false, message: 'Only teachers can take attendance.' });
       return;
     }
 
@@ -77,11 +83,15 @@ const TakeAttendancePage: React.FC = () => {
     formData.append('subject', subject || '');
     photos.forEach(photo => formData.append('class_images', photo));
 
+    console.log('Submitting with:');
+    console.log('Token:', token);
+    console.log('Role:', role);
+    console.log('FormData:', Object.fromEntries(formData.entries()));
+
     try {
       const response = await axios.post('http://localhost:8000/api/take-attendance/', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${token}`, // Removed Content-Type; axios handles it
         },
       });
       setResult({
@@ -92,7 +102,8 @@ const TakeAttendancePage: React.FC = () => {
         sheetUrl: response.data.sheet_url,
       });
     } catch (err: any) {
-      setResult({ success: false, message: err.response?.data?.message || 'Attendance failed' });
+      console.log('Error Response:', err.response?.data);
+      setResult({ success: false, message: err.response?.data?.message || 'Attendance failed. Please try again.' });
     } finally {
       setLoading(false);
     }

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
 import { Camera, Upload, Check, X } from 'lucide-react';
@@ -10,16 +10,37 @@ import { motion } from 'framer-motion';
 
 const EnrollPage: React.FC = () => {
   const navigate = useNavigate();
-  const { semester, section, token } = useUser();
+  const { semester, section, token, role, logout } = useUser();
   const [name, setName] = useState('');
   const [usn, setUsn] = useState('');
+  const [email, setEmail] = useState('');
   const [photos, setPhotos] = useState<File[]>([]);
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [showCamera, setShowCamera] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
+  const [existingStudents, setExistingStudents] = useState<{ usn: string; name: string; email: string }[]>([]);
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch existing students for the current semester and section
+  useEffect(() => {
+    const fetchStudents = async () => {
+      if (!token || !semester || !section) return;
+      try {
+        const response = await axios.get('http://localhost:8000/api/students/', {
+          headers: { 'Authorization': `Bearer ${token}` },
+          params: { semester, section },
+        });
+        if (response.data.success) {
+          setExistingStudents(response.data.students);
+        }
+      } catch (err) {
+        console.error('Failed to fetch students:', err);
+      }
+    };
+    fetchStudents();
+  }, [token, semester, section]);
 
   const capturePhoto = () => {
     if (webcamRef.current) {
@@ -53,14 +74,37 @@ const EnrollPage: React.FC = () => {
     setCapturedImages(capturedImages.filter((_, i) => i !== index));
   };
 
+  const handleUsnChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedUsn = e.target.value;
+    setUsn(selectedUsn);
+    const student = existingStudents.find(s => s.usn === selectedUsn);
+    if (student) {
+      setName(student.name);
+      setEmail(student.email);
+    } else {
+      setName('');
+      setEmail('');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (photos.length === 0) {
       setMessage({ text: 'Please add at least one photo', type: 'error' });
       return;
     }
+    if (!usn) {
+      setMessage({ text: 'Please select or enter a USN', type: 'error' });
+      return;
+    }
     if (!token) {
-      setMessage({ text: 'You must be logged in to enroll a student', type: 'error' });
+      setMessage({ text: 'Session expired. Please log in again.', type: 'error' });
+      logout();
+      navigate('/login');
+      return;
+    }
+    if (role !== 'teacher') {
+      setMessage({ text: 'Only teachers can enroll/update students.', type: 'error' });
       return;
     }
 
@@ -68,27 +112,34 @@ const EnrollPage: React.FC = () => {
     setMessage({ text: '', type: '' });
 
     const formData = new FormData();
-    formData.append('name', name);
+    if (name) formData.append('name', name);
     formData.append('usn', usn);
-    formData.append('semester', semester || '');
-    formData.append('section', section || '');
+    if (email) formData.append('email', email);
+    if (semester) formData.append('semester', semester);
+    if (section) formData.append('section', section);
     photos.forEach(photo => formData.append('photos', photo));
+
+    console.log('Token:', token);
+    console.log('Role:', role);
+    console.log('FormData:', Object.fromEntries(formData.entries()));
 
     try {
       const response = await axios.post('http://localhost:8000/api/enroll/', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
           'Authorization': `Bearer ${token}`,
         },
       });
       setMessage({ text: response.data.message, type: 'success' });
+      setTimeout(() => setMessage({ text: '', type: '' }), 4000); // Clear after 4 seconds
       setName('');
       setUsn('');
+      setEmail('');
       setPhotos([]);
       setCapturedImages([]);
       setShowCamera(false);
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.message || 'Enrollment failed', type: 'error' });
+      console.log('Error Response:', err.response?.data);
+      setMessage({ text: err.response?.data?.message || 'Operation failed', type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -105,7 +156,7 @@ const EnrollPage: React.FC = () => {
           transition={{ duration: 0.8, ease: 'easeOut' }}
         >
           <h2 className="text-4xl font-extrabold text-gray-800 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
-            Enroll Student
+            Enroll/Update Student
           </h2>
           {message.text && (
             <motion.div
@@ -125,6 +176,27 @@ const EnrollPage: React.FC = () => {
               transition={{ duration: 0.8, delay: 0.2 }}
             >
               <div>
+                <label htmlFor="usn" className="block text-gray-700 font-medium mb-2">Select Student USN</label>
+                <select
+                  id="usn"
+                  value={usn}
+                  onChange={handleUsnChange}
+                  className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+                >
+                  <option value="">-- Select or enter new USN --</option>
+                  {existingStudents.map(student => (
+                    <option key={student.usn} value={student.usn}>{student.usn} - {student.name}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={usn}
+                  onChange={(e) => setUsn(e.target.value)}
+                  className="w-full mt-2 p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+                  placeholder="Or enter new USN"
+                />
+              </div>
+              <div>
                 <label htmlFor="name" className="block text-gray-700 font-medium mb-2">Full Name</label>
                 <input
                   type="text"
@@ -132,20 +204,18 @@ const EnrollPage: React.FC = () => {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
-                  placeholder="Enter student's full name"
-                  required
+                  placeholder="Enter or update student's full name"
                 />
               </div>
-              <div>
-                <label htmlFor="usn" className="block text-gray-700 font-medium mb-2">USN</label>
+              <div className="md:col-span-2">
+                <label htmlFor="email" className="block text-gray-700 font-medium mb-2">Email</label>
                 <input
-                  type="text"
-                  id="usn"
-                  value={usn}
-                  onChange={(e) => setUsn(e.target.value)}
+                  type="email"
+                  id="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
-                  placeholder="Enter student's USN"
-                  required
+                  placeholder="Enter or update student's email"
                 />
               </div>
             </motion.div>
@@ -252,7 +322,7 @@ const EnrollPage: React.FC = () => {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                {loading ? 'Processing...' : <><Check size={18} className="mr-2" /> Enroll Student</>}
+                {loading ? 'Processing...' : <><Check size={18} className="mr-2" /> {usn && existingStudents.some(s => s.usn === usn) ? 'Update Student' : 'Enroll Student'}</>}
               </motion.button>
             </motion.div>
           </form>
