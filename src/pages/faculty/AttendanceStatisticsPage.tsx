@@ -22,7 +22,10 @@ import Confetti from 'react-confetti';
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 interface AttendanceFile { id: string; name: string; }
-interface AttendanceStatistics { above75: Array<{ student: string; percentage: number }>; below75: Array<{ student: string; percentage: number }>; }
+interface AttendanceStatistics { 
+  above75: Array<{ student: string; percentage: number; present: number; absent: number }>; 
+  below75: Array<{ student: string; percentage: number; present: number; absent: number }>; 
+}
 
 const AttendanceStatisticsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -34,6 +37,7 @@ const AttendanceStatisticsPage: React.FC = () => {
   const [error, setError] = useState('');
   const [pdfUrl, setPdfUrl] = useState('');
   const [showConfetti, setShowConfetti] = useState(false);
+  const [downloadLoading, setDownloadLoading] = useState(false);
 
   useEffect(() => {
     const fetchFiles = async () => {
@@ -72,15 +76,17 @@ const AttendanceStatisticsPage: React.FC = () => {
     setShowConfetti(false);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/generate-statistics/', { file_id: selectedFile }, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const response = await axios.post(
+        'http://localhost:8000/api/generate-statistics/',
+        { file_id: selectedFile },
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
       if (response.data.success) {
         setStatistics({ above75: response.data.above_75, below75: response.data.below_75 });
         setPdfUrl(response.data.pdf_url);
         if (response.data.above_75.length > response.data.below_75.length) {
           setShowConfetti(true);
-          setTimeout(() => setShowConfetti(false), 5000); // Confetti for 5 seconds
+          setTimeout(() => setShowConfetti(false), 5000);
         }
       } else {
         setError(response.data.message || 'Failed to generate statistics');
@@ -89,6 +95,36 @@ const AttendanceStatisticsPage: React.FC = () => {
       setError(err.response?.data?.message || 'An error occurred while generating statistics');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    if (!pdfUrl || !token) return;
+
+    setDownloadLoading(true);
+    setError('');
+
+    try {
+      const response = await axios.get(`http://localhost:8000${pdfUrl}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        responseType: 'blob',
+      });
+
+      const pdfBlob = new Blob([response.data], { type: 'application/pdf' });
+      const downloadUrl = window.URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = pdfUrl.split('/').pop() || 'attendance_report.pdf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err: any) {
+      console.error('Error downloading PDF:', err);
+      setError(err.response?.data?.message || 'Failed to download PDF');
+    } finally {
+      setDownloadLoading(false);
     }
   };
 
@@ -123,9 +159,7 @@ const AttendanceStatisticsPage: React.FC = () => {
       },
     },
     plugins: {
-      legend: {
-        display: false,
-      },
+      legend: { display: false },
       title: {
         display: true,
         text: 'Attendance Distribution',
@@ -141,17 +175,8 @@ const AttendanceStatisticsPage: React.FC = () => {
     scales: {
       y: {
         beginAtZero: true,
-        ticks: {
-          stepSize: 1,
-          font: { size: 12, family: 'Poppins' },
-          color: '#4B5563',
-        },
-        title: {
-          display: true,
-          text: 'Number of Students',
-          font: { size: 16, family: 'Poppins' },
-          color: '#4B5563',
-        },
+        ticks: { stepSize: 1, font: { size: 12, family: 'Poppins' }, color: '#4B5563' },
+        title: { display: true, text: 'Number of Students', font: { size: 16, family: 'Poppins' }, color: '#4B5563' },
         grid: { color: 'rgba(209, 213, 219, 0.3)' },
       },
       x: {
@@ -315,7 +340,7 @@ const AttendanceStatisticsPage: React.FC = () => {
                   transition={{ duration: 0.5, delay: 0.8 }}
                 >
                   <h4 className="font-medium text-red-800 mb-3 flex items-center">
-                    <Users size={18} className="mr-2" /> Students with &lt;75% Attendance
+                    <Users size={18} className="mr-2" /> Students with {"<75%"} Attendance
                   </h4>
                   {statistics.below75.length > 0 ? (
                     <div className="max-h-80 overflow-y-auto">
@@ -343,7 +368,7 @@ const AttendanceStatisticsPage: React.FC = () => {
                       </table>
                     </div>
                   ) : (
-                    <p className="text-gray-600">No students with attendance &lt;75%</p>
+                    <p className="text-gray-600">No students with attendance {"<75%"}</p>
                   )}
                 </motion.div>
               </div>
@@ -356,11 +381,22 @@ const AttendanceStatisticsPage: React.FC = () => {
                   transition={{ duration: 0.5, delay: 1 }}
                 >
                   <a
-                    href={pdfUrl}
-                    download
-                    className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-full transition-colors shadow-md"
+                    href={`http://localhost:8000${pdfUrl}`}
+                    className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-full transition-colors shadow-md ${downloadLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    onClick={handleDownload}
                   >
-                    <Download size={18} className="mr-2" /> Download PDF Report
+                    <Download size={18} className="mr-2" />
+                    {downloadLoading ? (
+                      <span className="flex items-center">
+                        <svg className="animate-spin h-5 w-5 mr-2 text-white" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Downloading...
+                      </span>
+                    ) : (
+                      'Download PDF Report'
+                    )}
                   </a>
                 </motion.div>
               )}

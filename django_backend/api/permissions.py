@@ -4,9 +4,9 @@ class IsHOD(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.role == 'hod'
 
-class IsFaculty(BasePermission):
+class IsTeacher(BasePermission):  # Renamed from IsFaculty
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role == 'faculty'
+        return request.user.is_authenticated and request.user.role == 'teacher'
 
 class IsStudent(BasePermission):
     def has_permission(self, request, view):

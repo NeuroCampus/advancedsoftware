@@ -2,7 +2,7 @@ import React, { createContext, useState, useContext, ReactNode } from 'react';
 
 interface UserContextType {
   user_id: string | null;
-  role: string | null;
+  role: string | null; // Ensure this is present
   token: string | null;
   semester: string | null;
   section: string | null;
@@ -11,7 +11,7 @@ interface UserContextType {
   setSemester: (semester: string | null) => void;
   setSection: (section: string | null) => void;
   setSubject: (subject: string | null) => void;
-  logout: () => void;
+  logout: () => void; // Ensure this is present
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
