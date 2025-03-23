@@ -1,0 +1,51 @@
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Virtual Environment
+venv/
+env/
+
+# Python Bytecode Files
+__pycache__/
+*.py[cod]
+
+# Django Database
+db.sqlite3
+
+# Django Migrations
+*/migrations/*
+
+# Sensitive Credentials & Config Files
+*.env
+*.key
+*.pem
+*.crt
+credentials.json  # Your Google API credentials file
+SECRET_KEY
+
+# Static & Media Files
+staticfiles/
+media/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# Dlib and Face Recognition Model Files
+*.dat
+shape_predictor_*.dat
+dlib_face_recognition_resnet_model_v1.dat
+node_modules
+django_backend/credentials.json
