@@ -1,7 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.http import FileResponse
-from ..permissions import IsTeacher
+from ..permissions import IsTeacher, IsTeacherOrHOD  # Updated import
 from .utils import face_detector, shape_predictor, face_recognizer, load_all_students, is_same_person, get_google_sheet_id, update_attendance_in_sheet, parse_attendance, calculate_statistics, generate_pdf
 from ..models import AttendanceRecord, AttendanceDetail, Student, User
 import os
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 @permission_classes([IsTeacher])
 def take_attendance(request) -> Response:
     logger.info("Received take_attendance request")
-    
     if face_detector is None or shape_predictor is None or face_recognizer is None:
         logger.error("Face recognition models not loaded")
         return Response({'success': False, 'message': 'Face recognition models not loaded'})
@@ -297,7 +296,7 @@ def enroll(request) -> Response:
         except PermissionError as e:
             logger.error("Permission denied writing to pickle file %s: %s", settings.PICKLE_FILE, str(e))
             return Response({'success': False, 'message': 'Permission denied updating student data'}, status=500)
-        message = f"Student {student.name} ({usn}) {'updated' if GRADED else 'enrolled'} successfully."
+        message = f"Student {student.name} ({usn}) {'updated' if is_update else 'enrolled'} successfully."
         if not is_update:
             message += f" Default password is 'default123'."
         logger.info(message)
@@ -311,9 +310,9 @@ def enroll(request) -> Response:
         return Response({'success': False, 'message': f'Error processing request: {str(e)}'}, status=500)
 
 @api_view(['POST'])
-@permission_classes([IsTeacher])
+@permission_classes([IsTeacherOrHOD])
 def generate_statistics(request) -> Response:
-    logger.info("Received generate_statistics request from faculty")
+    logger.info("Received generate_statistics request")
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
     if not token:
         logger.error("Authentication token missing")
@@ -371,7 +370,7 @@ def generate_statistics(request) -> Response:
         return Response({'success': False, 'message': f'Error generating statistics: {str(e)}'}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsTeacher])
+@permission_classes([IsTeacherOrHOD])
 def download_pdf(request, filename: str) -> FileResponse:
     logger.info("Received download_pdf request for %s", filename)
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
@@ -387,7 +386,7 @@ def download_pdf(request, filename: str) -> FileResponse:
         return Response({'success': False, 'message': 'File not found'}, status=404)
 
 @api_view(['GET'])
-@permission_classes([IsTeacher])
+@permission_classes([IsTeacherOrHOD])  # Updated to allow HOD access
 def get_students(request) -> Response:
     logger.info("Received get_students request")
     semester = request.query_params.get('semester')
@@ -405,7 +404,7 @@ def get_students(request) -> Response:
         return Response({'success': False, 'message': f'Error fetching students: {str(e)}'}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsTeacher])
+@permission_classes([IsTeacherOrHOD])  # Updated to allow HOD access
 def get_student_photos(request) -> Response:
     logger.info("Received get_student_photos request")
     usn = request.query_params.get('usn')
@@ -430,7 +429,7 @@ def get_student_photos(request) -> Response:
         return Response({'success': False, 'message': f'Error fetching photos: {str(e)}'}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsTeacher])
+@permission_classes([IsTeacherOrHOD])  # Updated to allow HOD access
 def serve_student_photo(request, usn: str, filename: str) -> FileResponse:
     logger.info("Received serve_student_photo request for %s/%s", usn, filename)
     photo_path = os.path.join(settings.STUDENT_DATA_PATH, usn, filename)
