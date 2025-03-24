@@ -5,16 +5,18 @@ import { motion } from 'framer-motion';
 
 const HODDashboard: React.FC = () => {
   const [subjects, setSubjects] = useState<string[]>([]);
+  const [semesters, setSemesters] = useState<string[]>([]);
+  const [sections, setSections] = useState<string[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string>('');
-  const [semester, setSemester] = useState<string>('');
-  const [section, setSection] = useState<string>('');
+  const [selectedSemester, setSelectedSemester] = useState<string>('');
+  const [selectedSection, setSelectedSection] = useState<string>('');
   const [attendanceFiles, setAttendanceFiles] = useState<any[]>([]);
   const [stats, setStats] = useState<{ above_75: any[]; below_75: any[]; pdf_url: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { token, role, logout, setSemester: setContextSemester, setSection: setContextSection, setSubject: setContextSubject } = useUser();
 
-  // Fetch subjects on mount
+  // Fetch subjects, semesters, and sections on mount
   useEffect(() => {
     const fetchSubjects = async () => {
       if (!token || role !== 'hod') {
@@ -30,11 +32,13 @@ const HODDashboard: React.FC = () => {
         });
         if (response.data.success) {
           setSubjects(response.data.subjects);
+          setSemesters(response.data.semesters);
+          setSections(response.data.sections);
         } else {
-          setError(response.data.message || 'Failed to fetch subjects');
+          setError(response.data.message || 'Failed to fetch data');
         }
       } catch (err: any) {
-        setError(err.response?.data?.message || 'Error fetching subjects');
+        setError(err.response?.data?.message || 'Error fetching data');
         if (err.response?.status === 401) logout();
       } finally {
         setLoading(false);
@@ -46,7 +50,7 @@ const HODDashboard: React.FC = () => {
 
   // Fetch attendance files when subject, semester, and section are selected
   const fetchAttendanceFiles = async () => {
-    if (!selectedSubject || !semester || !section) {
+    if (!selectedSubject || !selectedSemester || !selectedSection) {
       setError('Please select subject, semester, and section.');
       return;
     }
@@ -58,14 +62,14 @@ const HODDashboard: React.FC = () => {
     try {
       const response = await axios.get('http://localhost:8000/api/attendance-files/', {
         headers: { Authorization: `Bearer ${token}` },
-        params: { subject: selectedSubject, semester, section },
+        params: { subject: selectedSubject, semester: selectedSemester, section: selectedSection },
       });
       if (response.data.success) {
         setAttendanceFiles(response.data.files);
         // Update context for consistency
         setContextSubject(selectedSubject);
-        setContextSemester(semester);
-        setContextSection(section);
+        setContextSemester(selectedSemester);
+        setContextSection(selectedSection);
       } else {
         setError(response.data.message || 'No attendance files found');
       }
@@ -205,23 +209,33 @@ const HODDashboard: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-gray-700 font-medium mb-2">Semester</label>
-                  <input
-                    type="text"
-                    value={semester}
-                    onChange={(e) => setSemester(e.target.value)}
-                    placeholder="e.g., 1"
+                  <select
+                    value={selectedSemester}
+                    onChange={(e) => setSelectedSemester(e.target.value)}
                     className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  >
+                    <option value="">Select Semester</option>
+                    {semesters.map((sem) => (
+                      <option key={sem} value={sem}>
+                        {sem}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-gray-700 font-medium mb-2">Section</label>
-                  <input
-                    type="text"
-                    value={section}
-                    onChange={(e) => setSection(e.target.value)}
-                    placeholder="e.g., A"
+                  <select
+                    value={selectedSection}
+                    onChange={(e) => setSelectedSection(e.target.value)}
                     className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  >
+                    <option value="">Select Section</option>
+                    {sections.map((sec) => (
+                      <option key={sec} value={sec}>
+                        {sec}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <motion.button

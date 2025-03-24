@@ -8,7 +8,6 @@ import os
 from django.conf import settings
 import logging
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
@@ -18,14 +17,22 @@ def get_subjects(request) -> Response:
     if not token:
         return Response({'success': False, 'message': 'Authentication token required'}, status=401)
     try:
+        # Fetch unique subjects, semesters, and sections
         subjects = AttendanceRecord.objects.values_list('subject', flat=True).distinct()
-        return Response({
+        semesters = AttendanceRecord.objects.values_list('semester', flat=True).distinct()
+        sections = AttendanceRecord.objects.values_list('section', flat=True).distinct()
+        response_data = {
             'success': True,
-            'message': 'Subjects retrieved successfully' if subjects else 'No subjects found',
-            'subjects': list(subjects)
-        })
+            'message': 'Data retrieved successfully' if subjects else 'No data found',
+            'subjects': list(subjects),
+            'semesters': list(semesters),
+            'sections': list(sections),
+        }
+        logger.info("Retrieved subjects: %s, semesters: %s, sections: %s", list(subjects), list(semesters), list(sections))
+        return Response(response_data)
     except Exception as e:
-        return Response({'success': False, 'message': f'Error retrieving subjects: {str(e)}'}, status=500)
+        logger.error("Error retrieving data: %s", str(e))
+        return Response({'success': False, 'message': f'Error retrieving data: {str(e)}'}, status=500)
 
 @api_view(['GET'])
 @permission_classes([IsTeacherOrHOD])
@@ -39,7 +46,6 @@ def get_attendance_files(request) -> Response:
     if not all([semester, section, subject]):
         return Response({'success': False, 'message': 'Missing required parameters'}, status=400)
     try:
-        # Get the latest record for this subject, semester, and section
         record = AttendanceRecord.objects.filter(semester=semester, section=section, subject=subject).order_by('-date').first()
         if not record or not record.file_path or not os.path.exists(record.file_path):
             return Response({'success': False, 'message': f'No attendance file found for {subject} ({semester} {section})'}, status=404)
@@ -67,22 +73,18 @@ def generate_statistics(request) -> Response:
         if not record.file_path or not os.path.exists(record.file_path):
             return Response({'success': False, 'message': 'Attendance file not found'}, status=404)
         
-        # Parse all sessions from the single attendance file
         attendance_records = parse_attendance(record.file_path)
         if not attendance_records:
             return Response({'success': False, 'message': 'No valid attendance data in file'}, status=404)
         
-        # Calculate statistics based on all sessions
         stats = calculate_statistics(attendance_records)
         total_sessions = len(attendance_records)
         
-        # Generate PDF
         pdf_filename = f"attendance_report_{record.semester}_{record.subject}_{record.section}_{record.date.strftime('%Y%m%d')}.pdf"
         pdf_path = os.path.join(settings.MEDIA_ROOT, pdf_filename)
         os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
         generate_pdf(stats, pdf_path, record)
         
-        # Prepare detailed response
         detailed_stats = {
             student: {
                 'percentage': round(percentage, 2),

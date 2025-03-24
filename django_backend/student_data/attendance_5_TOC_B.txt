@@ -1,16 +1,24 @@
 
---- Attendance Session: 2025-03-23 14:53:51 ---
-Present Students: Ritesh N
-Absent Students: Raghuveer
+--- Attendance Session: 2025-03-24 16:59:12 ---
+Present Students: Raghuveer, Ritesh N, RUTHU P
+Absent Students: PannagaJA
 
---- Attendance Session: 2025-03-23 15:00:20 ---
-Present Students: Ritesh N
-Absent Students: Raghuveer
+--- Attendance Session: 2025-03-24 17:01:43 ---
+Present Students: Raghuveer, Ritesh N, RUTHU P
+Absent Students: PannagaJA
 
---- Attendance Session: 2025-03-23 16:11:42 ---
-Present Students: Raghuveer
-Absent Students: Ritesh N
+--- Attendance Session: 2025-03-24 17:10:24 ---
+Present Students: Raghuveer, Ritesh N, RUTHU P
+Absent Students: PannagaJA
 
---- Attendance Session: 2025-03-23 18:38:39 ---
-Present Students: Ritesh N
-Absent Students: Raghuveer, Jhon, RUTHU P, Pannaga JA, Shashank GS
+--- Attendance Session: 2025-03-24 17:25:34 ---
+Present Students: 
+Absent Students: Ritesh N, Raghuveer, PannagaJA, RUTHU P
+
+--- Attendance Session: 2025-03-24 17:27:51 ---
+Present Students: RUTHU P, Ritesh N, Raghuveer
+Absent Students: PannagaJA
+
+--- Attendance Session: 2025-03-24 17:29:12 ---
+Present Students: 
+Absent Students: Ritesh N, Raghuveer, PannagaJA, RUTHU P
