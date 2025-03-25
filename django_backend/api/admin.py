@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.hashers import make_password
-from .models import User, Student, AttendanceRecord, AttendanceDetail
+from django.utils import timezone
+from .models import User, Student, AttendanceRecord, AttendanceDetail, LeaveRequest, StudentLeaveRequest
 from .views.utils import sync_pickle_with_database
 
 # Inline for Student within UserAdmin
@@ -43,7 +44,6 @@ class UserAdmin(BaseUserAdmin):
         self.message_user(request, f"Successfully reset passwords for {updated} users to '{default_password}'.")
     reset_passwords.short_description = "Reset selected users' passwords to 'newpassword123'"
 
-# Register Student with sync functionality
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = ('name', 'usn', 'semester', 'section', 'user')
@@ -52,12 +52,10 @@ class StudentAdmin(admin.ModelAdmin):
     fields = ('name', 'usn', 'semester', 'section', 'user')
 
     def delete_model(self, request, obj):
-        """Override to sync pickle file after single deletion."""
         super().delete_model(request, obj)
         sync_pickle_with_database()
 
     def delete_queryset(self, request, queryset):
-        """Override to sync pickle file after bulk deletion."""
         super().delete_queryset(request, queryset)
         sync_pickle_with_database()
 
@@ -81,3 +79,81 @@ class AttendanceDetailAdmin(admin.ModelAdmin):
     def mark_absent(self, request, queryset):
         queryset.update(status=False)
     mark_absent.short_description = "Mark selected as Absent"
+
+@admin.register(LeaveRequest)
+class LeaveRequestAdmin(admin.ModelAdmin):
+    list_display = ('faculty', 'start_date', 'end_date', 'status', 'submitted_at', 'reviewed_by', 'reviewed_at')
+    list_filter = ('status', 'faculty__role', 'submitted_at', 'reviewed_at')
+    search_fields = ('faculty__username', 'reason')
+    fields = ('faculty', 'start_date', 'end_date', 'reason', 'status', 'submitted_at', 'reviewed_at', 'reviewed_by')
+    readonly_fields = ('submitted_at', 'reviewed_at', 'reviewed_by')
+    actions = ['approve_requests', 'reject_requests']
+
+    def approve_requests(self, request, queryset):
+        updated = queryset.filter(status='PENDING').update(
+            status='APPROVED',
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user
+        )
+        self.message_user(request, f"Successfully approved {updated} leave requests.")
+    approve_requests.short_description = "Approve selected leave requests"
+
+    def reject_requests(self, request, queryset):
+        updated = queryset.filter(status='PENDING').update(
+            status='REJECTED',
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user
+        )
+        self.message_user(request, f"Successfully rejected {updated} leave requests.")
+    reject_requests.short_description = "Reject selected leave requests"
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser and request.user.role == 'hod':
+            return qs.filter(status='PENDING')
+        return qs
+
+    def save_model(self, request, obj, form, change):
+        if change and obj.status in ['APPROVED', 'REJECTED'] and not obj.reviewed_by:
+            obj.reviewed_by = request.user
+            obj.reviewed_at = timezone.now()
+        super().save_model(request, obj, form, change)
+
+@admin.register(StudentLeaveRequest)
+class StudentLeaveRequestAdmin(admin.ModelAdmin):
+    list_display = ('student', 'start_date', 'end_date', 'status', 'submitted_at', 'reviewed_by', 'reviewed_at')
+    list_filter = ('status', 'submitted_at', 'reviewed_at')
+    search_fields = ('student__username', 'reason')
+    fields = ('student', 'start_date', 'end_date', 'reason', 'status', 'submitted_at', 'reviewed_at', 'reviewed_by')
+    readonly_fields = ('submitted_at', 'reviewed_at', 'reviewed_by')
+    actions = ['approve_requests', 'reject_requests']
+
+    def approve_requests(self, request, queryset):
+        updated = queryset.filter(status='PENDING').update(
+            status='APPROVED',
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user
+        )
+        self.message_user(request, f"Successfully approved {updated} student leave requests.")
+    approve_requests.short_description = "Approve selected student leave requests"
+
+    def reject_requests(self, request, queryset):
+        updated = queryset.filter(status='PENDING').update(
+            status='REJECTED',
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user
+        )
+        self.message_user(request, f"Successfully rejected {updated} student leave requests.")
+    reject_requests.short_description = "Reject selected student leave requests"
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser and request.user.role == 'teacher':
+            return qs.filter(status='PENDING')
+        return qs
+
+    def save_model(self, request, obj, form, change):
+        if change and obj.status in ['APPROVED', 'REJECTED'] and not obj.reviewed_by:
+            obj.reviewed_by = request.user
+            obj.reviewed_at = timezone.now()
+        super().save_model(request, obj, form, change)

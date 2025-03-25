@@ -12,8 +12,8 @@ Present Students: Raghuveer, Ritesh N, RUTHU P
 Absent Students: PannagaJA
 
 --- Attendance Session: 2025-03-24 17:25:34 ---
-Present Students: 
-Absent Students: Ritesh N, Raghuveer, PannagaJA, RUTHU P
+Present Students: Ritesh N
+Absent Students: Raghuveer, PannagaJA, RUTHU P
 
 --- Attendance Session: 2025-03-24 17:27:51 ---
 Present Students: RUTHU P, Ritesh N, Raghuveer
@@ -22,3 +22,7 @@ Absent Students: PannagaJA
 --- Attendance Session: 2025-03-24 17:29:12 ---
 Present Students: 
 Absent Students: Ritesh N, Raghuveer, PannagaJA, RUTHU P
+
+--- Attendance Session: 2025-03-25 04:42:31 ---
+Present Students: RUTHU P, Raghuveer, Ritesh N
+Absent Students: PannagaJA
