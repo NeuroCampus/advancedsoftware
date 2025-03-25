@@ -1,9 +1,9 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.http import FileResponse
-from ..permissions import IsTeacher, IsTeacherOrHOD  # Updated import
+from ..permissions import IsTeacher, IsTeacherOrHOD
 from .utils import face_detector, shape_predictor, face_recognizer, load_all_students, is_same_person, get_google_sheet_id, update_attendance_in_sheet, parse_attendance, calculate_statistics, generate_pdf
-from ..models import AttendanceRecord, AttendanceDetail, Student, User
+from ..models import AttendanceRecord, AttendanceDetail, Student, User, LeaveRequest, StudentLeaveRequest
 import os
 import cv2
 import numpy as np
@@ -13,6 +13,7 @@ import logging
 from django.contrib.auth.hashers import make_password
 import pickle
 import glob
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def take_attendance(request) -> Response:
     logger.info("Received take_attendance request")
     if face_detector is None or shape_predictor is None or face_recognizer is None:
         logger.error("Face recognition models not loaded")
-        return Response({'success': False, 'message': 'Face recognition models not loaded'})
+        return Response({'success': False, 'message': 'Face recognition models not loaded'}, status=500)
     
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
     if not token:
@@ -35,7 +36,7 @@ def take_attendance(request) -> Response:
     files = request.FILES.getlist('class_images')
     if not all([subject, section, semester, files]):
         logger.error("Missing required fields: subject=%s, section=%s, semester=%s, files=%s", subject, section, semester, len(files))
-        return Response({'success': False, 'message': 'Missing required fields'})
+        return Response({'success': False, 'message': 'Missing required fields'}, status=400)
     
     try:
         logger.info("Fetching Google Sheet ID for %s_%s_%s", semester, subject, section)
@@ -51,7 +52,7 @@ def take_attendance(request) -> Response:
         logger.info("Created AttendanceRecord with ID: %s", attendance_record.id)
     except Exception as e:
         logger.error("Error creating attendance record: %s", str(e))
-        return Response({'success': False, 'message': f'Error creating attendance record: {str(e)}'})
+        return Response({'success': False, 'message': f'Error creating attendance record: {str(e)}'}, status=500)
     
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     attendance_file = f"attendance_{semester}_{subject}_{section}.txt"
@@ -60,12 +61,10 @@ def take_attendance(request) -> Response:
     attendance_record.save()
     
     present_students = set()
-    # Fetch students directly from the database first
     db_students = Student.objects.filter(semester=semester, section=section)
     class_students = [{'name': s.name, 'usn': s.usn, 'semester': s.semester, 'section': s.section, 'encodings': []} for s in db_students]
     logger.info("Loaded %d students from database for semester %s, section %s", len(class_students), semester, section)
     
-    # Load encodings from pickle file and merge with database students
     enrolled_students = load_all_students()
     for student in class_students:
         pickle_student = next((s for s in enrolled_students if s['usn'] == student['usn']), None)
@@ -84,7 +83,7 @@ def take_attendance(request) -> Response:
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if img is None or img.size == 0:
                 logger.error("Invalid image file: %s", file.name)
-                return Response({'success': False, 'message': 'Invalid image file'})
+                return Response({'success': False, 'message': 'Invalid image file'}, status=400)
             rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             faces = face_detector(rgb_img)
             logger.debug("Detected %d faces in image %s", len(faces), file.name)
@@ -98,7 +97,7 @@ def take_attendance(request) -> Response:
                         break
         except Exception as e:
             logger.error("Error processing class image %s: %s", file.name, str(e))
-            return Response({'success': False, 'message': f'Error processing class image: {str(e)}'})
+            return Response({'success': False, 'message': f'Error processing class image: {str(e)}'}, status=500)
     
     all_class_students = [(s['name'], s['usn']) for s in class_students]
     absent_students = [(name, usn) for name, usn in all_class_students if (name, usn) not in present_students]
@@ -119,7 +118,7 @@ def take_attendance(request) -> Response:
         logger.info("Wrote attendance to file: %s", file_path)
     except Exception as e:
         logger.error("Error writing to attendance file: %s", str(e))
-        return Response({'success': False, 'message': f'Error writing to attendance file: {str(e)}'})
+        return Response({'success': False, 'message': f'Error writing to attendance file: {str(e)}'}, status=500)
     
     try:
         for name, usn in present_students:
@@ -131,10 +130,10 @@ def take_attendance(request) -> Response:
         logger.info("Saved attendance details to database")
     except Student.DoesNotExist:
         logger.error("One or more students not found in database")
-        return Response({'success': False, 'message': 'One or more students not found in database'})
+        return Response({'success': False, 'message': 'One or more students not found in database'}, status=404)
     except Exception as e:
         logger.error("Error saving attendance details: %s", str(e))
-        return Response({'success': False, 'message': f'Error saving attendance details: {str(e)}'})
+        return Response({'success': False, 'message': f'Error saving attendance details: {str(e)}'}, status=500)
     
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=sharing" if sheet_id else None
     response_data = {
@@ -360,7 +359,7 @@ def generate_statistics(request) -> Response:
             'total_sessions': total_sessions,
             'above_75': above_75,
             'below_75': below_75,
-            'pdf_url': f"/api/download-pdf/{pdf_filename}"
+            'pdf_url': f"/api/faculty/download-pdf/{pdf_filename}"  # Updated to match urls.py
         })
     except AttendanceRecord.DoesNotExist:
         logger.error("Attendance record with ID %s not found", file_id)
@@ -386,7 +385,7 @@ def download_pdf(request, filename: str) -> FileResponse:
         return Response({'success': False, 'message': 'File not found'}, status=404)
 
 @api_view(['GET'])
-@permission_classes([IsTeacherOrHOD])  # Updated to allow HOD access
+@permission_classes([IsTeacherOrHOD])
 def get_students(request) -> Response:
     logger.info("Received get_students request")
     semester = request.query_params.get('semester')
@@ -404,7 +403,7 @@ def get_students(request) -> Response:
         return Response({'success': False, 'message': f'Error fetching students: {str(e)}'}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsTeacherOrHOD])  # Updated to allow HOD access
+@permission_classes([IsTeacherOrHOD])
 def get_student_photos(request) -> Response:
     logger.info("Received get_student_photos request")
     usn = request.query_params.get('usn')
@@ -421,7 +420,7 @@ def get_student_photos(request) -> Response:
             logger.info("No photos found for student %s", usn)
             return Response({'success': True, 'photos': []})
         photo_files = [os.path.basename(f) for f in glob.glob(os.path.join(photo_dir, "*.jpg"))]
-        photo_urls = [f"/api/student-photo/{usn}/{filename}" for filename in photo_files]
+        photo_urls = [f"/api/faculty/student-photo/{usn}/{filename}" for filename in photo_files]
         logger.info("Fetched %d photos for student %s", len(photo_urls), usn)
         return Response({'success': True, 'photos': photo_urls})
     except Exception as e:
@@ -429,7 +428,7 @@ def get_student_photos(request) -> Response:
         return Response({'success': False, 'message': f'Error fetching photos: {str(e)}'}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsTeacherOrHOD])  # Updated to allow HOD access
+@permission_classes([IsTeacherOrHOD])
 def serve_student_photo(request, usn: str, filename: str) -> FileResponse:
     logger.info("Received serve_student_photo request for %s/%s", usn, filename)
     photo_path = os.path.join(settings.STUDENT_DATA_PATH, usn, filename)
@@ -439,3 +438,164 @@ def serve_student_photo(request, usn: str, filename: str) -> FileResponse:
     else:
         logger.error("Photo not found: %s", photo_path)
         return Response({'success': False, 'message': 'Photo not found'}, status=404)
+
+@api_view(['POST'])
+@permission_classes([IsTeacher])
+def submit_leave_request(request) -> Response:
+    logger.info("Received submit_leave_request request")
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    if not token:
+        logger.error("Authentication token missing")
+        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
+
+    start_date = request.data.get('start_date')  # Expected format: YYYY-MM-DD
+    end_date = request.data.get('end_date')      # Expected format: YYYY-MM-DD
+    reason = request.data.get('reason')
+
+    if not all([start_date, end_date, reason]):
+        logger.error("Missing required fields: start_date=%s, end_date=%s, reason=%s", start_date, end_date, reason)
+        return Response({'success': False, 'message': 'Start date, end date, and reason are required'}, status=400)
+
+    try:
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        if start_date > end_date:
+            logger.error("Invalid date range: start_date=%s, end_date=%s", start_date, end_date)
+            return Response({'success': False, 'message': 'Start date must be before end date'}, status=400)
+
+        faculty = request.user
+        leave_request = LeaveRequest.objects.create(
+            faculty=faculty,
+            start_date=start_date,
+            end_date=end_date,
+            reason=reason
+        )
+        logger.info("Leave request created for %s: %s to %s", faculty.username, start_date, end_date)
+        return Response({
+            'success': True,
+            'message': 'Leave request submitted successfully',
+            'leave_id': str(leave_request.id),
+            'status': leave_request.status
+        }, status=201)
+    except ValueError as e:
+        logger.error("Invalid date format: %s", str(e))
+        return Response({'success': False, 'message': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+    except Exception as e:
+        logger.error("Error submitting leave request: %s", str(e))
+        return Response({'success': False, 'message': f'Error submitting leave request: {str(e)}'}, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsTeacher])
+def get_leave_requests(request) -> Response:
+    logger.info("Received get_leave_requests request from faculty")
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    if not token:
+        logger.error("Authentication token missing")
+        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
+
+    try:
+        faculty = request.user
+        leave_requests = LeaveRequest.objects.filter(faculty=faculty).select_related('reviewed_by')
+        requests_data = [
+            {
+                'id': str(lr.id),
+                'start_date': lr.start_date.strftime('%Y-%m-%d'),
+                'end_date': lr.end_date.strftime('%Y-%m-%d'),
+                'reason': lr.reason,
+                'status': lr.status,
+                'submitted_at': lr.submitted_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'reviewed_at': lr.reviewed_at.strftime('%Y-%m-%d %H:%M:%S') if lr.reviewed_at else None,
+                'reviewed_by': lr.reviewed_by.username if lr.reviewed_by else None
+            }
+            for lr in leave_requests
+        ]
+        logger.info("Retrieved %d leave requests for %s", len(requests_data), faculty.username)
+        return Response({
+            'success': True,
+            'message': 'Leave requests retrieved successfully' if requests_data else 'No leave requests found',
+            'leave_requests': requests_data
+        })
+    except Exception as e:
+        logger.error("Error retrieving leave requests: %s", str(e))
+        return Response({'success': False, 'message': f'Error retrieving leave requests: {str(e)}'}, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsTeacher])
+def get_student_leave_requests(request) -> Response:
+    logger.info("Received get_student_leave_requests request from faculty")
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    if not token:
+        logger.error("Authentication token missing")
+        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
+
+    try:
+        user = request.user
+        if user.role != 'teacher':
+            logger.error("Unauthorized access attempt by %s with role %s", user.username, user.role)
+            return Response({'success': False, 'message': 'Only faculty can access this endpoint'}, status=403)
+        
+        # Filter by students in the faculty's sections (optional enhancement)
+        leave_requests = StudentLeaveRequest.objects.filter(status='PENDING').select_related('student')
+        leave_data = [
+            {
+                'id': str(lr.id),
+                'student': lr.student.username,  # Using username (typically USN) for consistency
+                'student_name': Student.objects.get(user=lr.student).name,
+                'start_date': lr.start_date.strftime('%Y-%m-%d'),
+                'end_date': lr.end_date.strftime('%Y-%m-%d'),
+                'reason': lr.reason,
+                'submitted_at': lr.submitted_at.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+            for lr in leave_requests
+        ]
+        logger.info("Retrieved %d pending student leave requests for faculty %s", len(leave_data), user.username)
+        return Response({
+            'success': True,
+            'message': 'Student leave requests retrieved successfully' if leave_data else 'No pending student leave requests',
+            'leave_requests': leave_data
+        })
+    except Exception as e:
+        logger.error("Error retrieving student leave requests: %s", str(e))
+        return Response({'success': False, 'message': f'Error retrieving student leave requests: {str(e)}'}, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsTeacher])
+def manage_student_leave_request(request) -> Response:
+    logger.info("Received manage_student_leave_request request")
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    if not token:
+        logger.error("Authentication token missing")
+        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
+
+    leave_id = request.data.get('leave_id')
+    action = request.data.get('action')  # 'APPROVE' or 'REJECT'
+    if not leave_id or not action:
+        logger.error("Missing required fields: leave_id=%s, action=%s", leave_id, action)
+        return Response({'success': False, 'message': 'Leave ID and action are required'}, status=400)
+    
+    if action not in ['APPROVE', 'REJECT']:
+        logger.error("Invalid action: %s", action)
+        return Response({'success': False, 'message': 'Invalid action. Use APPROVE or REJECT'}, status=400)
+
+    try:
+        user = request.user
+        if user.role != 'teacher':
+            logger.error("Unauthorized access attempt by %s with role %s", user.username, user.role)
+            return Response({'success': False, 'message': 'Only faculty can manage student leave requests'}, status=403)
+        
+        leave_request = StudentLeaveRequest.objects.get(id=leave_id, status='PENDING')
+        leave_request.status = 'APPROVED' if action == 'APPROVE' else 'REJECTED'
+        leave_request.reviewed_at = timezone.now()  # Use timezone-aware datetime
+        leave_request.reviewed_by = user
+        leave_request.save()
+        logger.info("Student leave request %s %sd by %s", leave_id, action.lower(), user.username)
+        return Response({
+            'success': True,
+            'message': f'Student leave request {action.lower()}d successfully'
+        })
+    except StudentLeaveRequest.DoesNotExist:
+        logger.error("Student leave request with ID %s not found or already processed", leave_id)
+        return Response({'success': False, 'message': 'Leave request not found or already processed'}, status=404)
+    except Exception as e:
+        logger.error("Error managing student leave request: %s", str(e))
+        return Response({'success': False, 'message': f'Error managing leave request: {str(e)}'}, status=500)
