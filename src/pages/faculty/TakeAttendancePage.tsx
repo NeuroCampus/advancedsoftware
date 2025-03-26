@@ -89,7 +89,7 @@ const TakeAttendancePage: React.FC = () => {
     console.log('FormData:', Object.fromEntries(formData.entries()));
 
     try {
-      const response = await axios.post('http://localhost:8000/api/take-attendance/', formData, {
+      const response = await axios.post('http://localhost:8000/api/faculty/take-attendance/', formData, {
         headers: {
           'Authorization': `Bearer ${token}`, // Removed Content-Type; axios handles it
         },

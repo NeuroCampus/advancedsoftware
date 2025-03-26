@@ -46,7 +46,7 @@ const AttendanceStatisticsPage: React.FC = () => {
         return;
       }
       try {
-        const response = await axios.get('http://localhost:8000/api/attendance-files/', {
+        const response = await axios.get('http://localhost:8000/api/hod/attendance-files/', {
           params: { semester, section, subject },
           headers: { 'Authorization': `Bearer ${token}` },
         });
@@ -77,7 +77,7 @@ const AttendanceStatisticsPage: React.FC = () => {
 
     try {
       const response = await axios.post(
-        'http://localhost:8000/api/generate-statistics/',
+        'http://localhost:8000/api/faculty/generate-statistics/',
         { file_id: selectedFile },
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
