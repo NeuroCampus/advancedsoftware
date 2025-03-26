@@ -1,12 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
-import { Camera, Upload, Check, X } from 'lucide-react';
+import { Camera, Upload, Check, X, FileText } from 'lucide-react';
 import Webcam from 'react-webcam';
 import axios from 'axios';
 import Header from '../../components/Header';
 import { ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+// Define TypeScript interface for bulkMessage
+interface BulkMessage {
+  text: string;
+  type: '' | 'success' | 'error';
+  details: {
+    enrolled?: { name: string; usn: string }[];
+    updated?: { name: string; usn: string }[];  // Added for updated students
+    warnings?: string[];
+  } | null;
+}
 
 const EnrollPage: React.FC = () => {
   const navigate = useNavigate();
@@ -20,8 +31,13 @@ const EnrollPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
   const [existingStudents, setExistingStudents] = useState<{ usn: string; name: string; email: string }[]>([]);
+  const [showBulkEnroll, setShowBulkEnroll] = useState(false);
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState<BulkMessage>({ text: '', type: '', details: null });
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch existing students for the current semester and section
   useEffect(() => {
@@ -41,6 +57,21 @@ const EnrollPage: React.FC = () => {
     };
     fetchStudents();
   }, [token, semester, section]);
+
+  // Clear messages after 4 seconds
+  useEffect(() => {
+    if (message.text) {
+      const timer = setTimeout(() => setMessage({ text: '', type: '' }), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [message.text]);
+
+  useEffect(() => {
+    if (bulkMessage.text) {
+      const timer = setTimeout(() => setBulkMessage({ text: '', type: '', details: null }), 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [bulkMessage.text]);
 
   const capturePhoto = () => {
     if (webcamRef.current) {
@@ -119,18 +150,11 @@ const EnrollPage: React.FC = () => {
     if (section) formData.append('section', section);
     photos.forEach(photo => formData.append('photos', photo));
 
-    console.log('Token:', token);
-    console.log('Role:', role);
-    console.log('FormData:', Object.fromEntries(formData.entries()));
-
     try {
       const response = await axios.post('http://localhost:8000/api/faculty/enroll/', formData, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Authorization': `Bearer ${token}` },
       });
       setMessage({ text: response.data.message, type: 'success' });
-      setTimeout(() => setMessage({ text: '', type: '' }), 4000); // Clear after 4 seconds
       setName('');
       setUsn('');
       setEmail('');
@@ -138,10 +162,64 @@ const EnrollPage: React.FC = () => {
       setCapturedImages([]);
       setShowCamera(false);
     } catch (err: any) {
-      console.log('Error Response:', err.response?.data);
       setMessage({ text: err.response?.data?.message || 'Operation failed', type: 'error' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleBulkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setBulkFile(e.target.files[0]);
+    }
+  };
+
+  const handleBulkEnrollSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkFile) {
+      setBulkMessage({ text: 'Please select an Excel file', type: 'error', details: null });
+      return;
+    }
+    if (!token) {
+      setBulkMessage({ text: 'Session expired. Please log in again.', type: 'error', details: null });
+      logout();
+      navigate('/login');
+      return;
+    }
+    if (role !== 'teacher') {
+      setBulkMessage({ text: 'Only teachers can bulk enroll students.', type: 'error', details: null });
+      return;
+    }
+
+    setBulkLoading(true);
+    setBulkMessage({ text: '', type: '', details: null });
+
+    const formData = new FormData();
+    formData.append('excel_file', bulkFile);
+
+    try {
+      const response = await axios.post('http://localhost:8000/api/faculty/bulk-enroll/', formData, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      setBulkMessage({
+        text: response.data.message,
+        type: 'success',
+        details: {
+          enrolled: response.data.enrolled_students,
+          updated: response.data.updated_students,  // Added for updated students
+          warnings: response.data.warnings || [],
+        },
+      });
+      setBulkFile(null);
+      if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+    } catch (err: any) {
+      setBulkMessage({
+        text: err.response?.data?.message || 'Bulk enrollment failed',
+        type: 'error',
+        details: err.response?.data?.warnings ? { warnings: err.response.data.warnings } : null,
+      });
+    } finally {
+      setBulkLoading(false);
     }
   };
 
@@ -158,6 +236,8 @@ const EnrollPage: React.FC = () => {
           <h2 className="text-4xl font-extrabold text-gray-800 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
             Enroll/Update Student
           </h2>
+
+          {/* Single Enrollment Section */}
           {message.text && (
             <motion.div
               className={`mb-6 p-4 rounded-lg ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
@@ -169,12 +249,7 @@ const EnrollPage: React.FC = () => {
             </motion.div>
           )}
           <form onSubmit={handleSubmit}>
-            <motion.div
-              className="grid md:grid-cols-2 gap-4 mb-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-            >
+            <motion.div className="grid md:grid-cols-2 gap-4 mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.2 }}>
               <div>
                 <label htmlFor="usn" className="block text-gray-700 font-medium mb-2">Select Student USN</label>
                 <select
@@ -219,12 +294,7 @@ const EnrollPage: React.FC = () => {
                 />
               </div>
             </motion.div>
-            <motion.div
-              className="mb-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.4 }}
-            >
+            <motion.div className="mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.4 }}>
               <label className="block text-gray-700 font-medium mb-2">Student Photos (for Face Recognition)</label>
               <div className="flex flex-wrap gap-4 mb-4">
                 {capturedImages.map((img, index) => (
@@ -300,12 +370,7 @@ const EnrollPage: React.FC = () => {
                 </motion.div>
               )}
             </motion.div>
-            <motion.div
-              className="flex justify-end gap-4"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, delay: 0.6 }}
-            >
+            <motion.div className="flex justify-between gap-4 mb-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5, delay: 0.6 }}>
               <motion.button
                 type="button"
                 onClick={() => navigate(-1)}
@@ -314,6 +379,15 @@ const EnrollPage: React.FC = () => {
                 whileTap={{ scale: 0.95 }}
               >
                 <ArrowLeft size={18} className="mr-2" /> Back
+              </motion.button>
+              <motion.button
+                type="button"
+                onClick={() => setShowBulkEnroll(!showBulkEnroll)}
+                className="flex items-center bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded transition-colors"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <FileText size={18} className="mr-2" /> {showBulkEnroll ? 'Hide Bulk Enroll' : 'Bulk Enroll Students'}
               </motion.button>
               <motion.button
                 type="submit"
@@ -326,6 +400,100 @@ const EnrollPage: React.FC = () => {
               </motion.button>
             </motion.div>
           </form>
+
+          {/* Bulk Enrollment Section */}
+          {showBulkEnroll && (
+            <motion.div
+              className="mt-6 p-6 bg-blue-50 rounded-lg border border-blue-200"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <h3 className="text-2xl font-bold text-blue-700 mb-4">Bulk Enroll Students</h3>
+              {bulkMessage.text && (
+                <motion.div
+                  className={`mb-6 p-4 rounded-lg ${bulkMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5 }}
+                >
+                  <p>{bulkMessage.text}</p>
+                  {bulkMessage.details && (
+                    <div className="mt-2">
+                      {bulkMessage.details.enrolled && bulkMessage.details.enrolled.length > 0 && (
+                        <div>
+                          <strong>Newly Enrolled Students:</strong>
+                          <ul className="list-disc ml-6">
+                            {bulkMessage.details.enrolled.map((student, index) => (
+                              <li key={index}>{student.name} ({student.usn})</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {bulkMessage.details.updated && bulkMessage.details.updated.length > 0 && (
+                        <div className="mt-2">
+                          <strong>Updated Students:</strong>
+                          <ul className="list-disc ml-6">
+                            {bulkMessage.details.updated.map((student, index) => (
+                              <li key={index}>{student.name} ({student.usn})</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {bulkMessage.details.warnings && bulkMessage.details.warnings.length > 0 && (
+                        <div className="mt-2 text-yellow-700">
+                          <strong>Warnings:</strong>
+                          <ul className="list-disc ml-6">
+                            {bulkMessage.details.warnings.map((warning, index) => (
+                              <li key={index}>{warning}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+              <div className="mb-4 p-4 bg-blue-100 text-blue-800 rounded-lg">
+                <h4 className="font-semibold mb-2">Excel File Requirements:</h4>
+                <p>The Excel file must contain the following columns in this order:</p>
+                <ul className="list-disc ml-6">
+                  <li><strong>NAME</strong>: Full name of the student</li>
+                  <li><strong>USN</strong>: Unique student number</li>
+                  <li><strong>SEMESTER</strong>: Semester (e.g., 4, 5)</li>
+                  <li><strong>SECTION</strong>: Section (e.g., A, B)</li>
+                  <li><strong>MAIL ID</strong>: Student email address</li>
+                </ul>
+                <p className="mt-2">Example Format:</p>
+                <pre className="bg-gray-200 p-2 rounded mt-1 text-sm">
+                  NAME       | USN        | SEMESTER | SECTION | MAIL ID {"\n"}
+                  Priya S    | 1AM22CI080 | 4        | B       | priya@example.com {"\n"}
+                  Amit K     | 1AM22CI081 | 5        | A       | amit@example.com {"\n"}
+                </pre>
+              </div>
+              <form onSubmit={handleBulkEnrollSubmit}>
+                <div className="flex flex-col gap-4">
+                  <input
+                    type="file"
+                    ref={bulkFileInputRef}
+                    onChange={handleBulkFileChange}
+                    accept=".xls,.xlsx"
+                    className="p-3 border border-gray-300 rounded bg-gray-50"
+                  />
+                  <motion.button
+                    type="submit"
+                    disabled={bulkLoading}
+                    className={`flex items-center bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded transition-colors ${bulkLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    {bulkLoading ? 'Processing...' : <><Upload size={18} className="mr-2" /> Upload and Enroll</>}
+                  </motion.button>
+                </div>
+              </form>
+            </motion.div>
+          )}
         </motion.div>
       </main>
     </div>

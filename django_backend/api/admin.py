@@ -15,7 +15,7 @@ class StudentInline(admin.StackedInline):
 class UserAdmin(BaseUserAdmin):
     inlines = [StudentInline]
     list_display = ('username', 'email', 'role', 'is_staff', 'is_superuser')
-    list_filter = ('role', 'is_staff', 'is_superuser')
+    list_filter = ('role', 'is_staff', 'is_superuser')  # Role choices are now student, teacher, hod
     search_fields = ('username', 'email')
     
     add_fieldsets = (
@@ -46,10 +46,33 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'usn', 'semester', 'section', 'user')
-    list_filter = ('semester', 'section')
+    list_display = ('name', 'usn', 'semester', 'section', 'user', 'last_modified')
+    list_filter = ('semester', 'section', 'last_modified')
     search_fields = ('name', 'usn')
-    fields = ('name', 'usn', 'semester', 'section', 'user')
+    fields = ('name', 'usn', 'semester', 'section', 'user', 'last_modified')
+    readonly_fields = ('last_modified',)
+    actions = ['update_semester', 'update_section', 'sync_with_pickle']
+
+    def update_semester(self, request, queryset):
+        updated = queryset.update(semester='6')
+        self.message_user(request, f"Successfully updated semester to '6' for {updated} students.")
+        sync_pickle_with_database()
+    update_semester.short_description = "Update semester to 6 for selected students"
+
+    def update_section(self, request, queryset):
+        updated = queryset.update(section='B')
+        self.message_user(request, f"Successfully updated section to 'B' for {updated} students.")
+        sync_pickle_with_database()
+    update_section.short_description = "Update section to B for selected students"
+
+    def sync_with_pickle(self, request, queryset):
+        sync_pickle_with_database()
+        self.message_user(request, "Successfully synced student data with pickle file.")
+    sync_with_pickle.short_description = "Sync student data with pickle file"
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        sync_pickle_with_database()
 
     def delete_model(self, request, obj):
         super().delete_model(request, obj)

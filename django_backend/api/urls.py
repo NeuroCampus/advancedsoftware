@@ -16,6 +16,7 @@ urlpatterns = [
     # Faculty endpoints
     path('faculty/take-attendance/', faculty_views.take_attendance, name='take_attendance'),
     path('faculty/enroll/', faculty_views.enroll, name='enroll_student'),
+    path('faculty/bulk-enroll/', faculty_views.bulk_enroll, name='bulk_enroll'),  # New endpoint added
     path('faculty/generate-statistics/', faculty_views.generate_statistics, name='faculty_generate_statistics'),
     path('faculty/download-pdf/<str:filename>/', faculty_views.download_pdf, name='download_pdf'),
     path('faculty/students/', faculty_views.get_students, name='get_students'),
@@ -28,7 +29,7 @@ urlpatterns = [
     path('hod/subjects/', hod_views.get_subjects, name='get_subjects'),
     path('hod/attendance-files/', hod_views.get_attendance_files, name='get_attendance_files'),
     path('hod/generate-statistics/', hod_views.generate_statistics, name='hod_generate_statistics'),
-    path('hod/download-file/<str:filename>/', hod_views.download_file, name='download_file'),  # Updated to match hod_views.py
+    path('hod/download-file/<str:filename>/', hod_views.download_file, name='download_file'),
     path('hod/leave-requests/', hod_views.get_leave_requests, name='hod_get_leave_requests'),
     path('hod/manage-leave-request/', hod_views.manage_leave_request, name='manage_leave_request'),
 

@@ -41,6 +41,7 @@ class Student(models.Model):
         null=True,
         related_name='student_profile'
     )
+    last_modified = models.DateTimeField(auto_now=True)  # Added to track updates
 
     def __str__(self):
         return f"{self.name} ({self.usn})"
