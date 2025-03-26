@@ -28,7 +28,7 @@ const EnrollPage: React.FC = () => {
     const fetchStudents = async () => {
       if (!token || !semester || !section) return;
       try {
-        const response = await axios.get('http://localhost:8000/api/students/', {
+        const response = await axios.get('http://localhost:8000/api/faculty/students/', {
           headers: { 'Authorization': `Bearer ${token}` },
           params: { semester, section },
         });
@@ -124,7 +124,7 @@ const EnrollPage: React.FC = () => {
     console.log('FormData:', Object.fromEntries(formData.entries()));
 
     try {
-      const response = await axios.post('http://localhost:8000/api/enroll/', formData, {
+      const response = await axios.post('http://localhost:8000/api/faculty/enroll/', formData, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
