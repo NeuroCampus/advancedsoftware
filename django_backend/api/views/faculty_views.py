@@ -14,6 +14,7 @@ from django.contrib.auth.hashers import make_password
 import pickle
 import glob
 from django.utils import timezone
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +360,7 @@ def generate_statistics(request) -> Response:
             'total_sessions': total_sessions,
             'above_75': above_75,
             'below_75': below_75,
-            'pdf_url': f"/api/faculty/download-pdf/{pdf_filename}"  # Updated to match urls.py
+            'pdf_url': f"/api/faculty/download-pdf/{pdf_filename}"
         })
     except AttendanceRecord.DoesNotExist:
         logger.error("Attendance record with ID %s not found", file_id)
@@ -448,8 +449,8 @@ def submit_leave_request(request) -> Response:
         logger.error("Authentication token missing")
         return Response({'success': False, 'message': 'Authentication token required'}, status=401)
 
-    start_date = request.data.get('start_date')  # Expected format: YYYY-MM-DD
-    end_date = request.data.get('end_date')      # Expected format: YYYY-MM-DD
+    start_date = request.data.get('start_date')
+    end_date = request.data.get('end_date')
     reason = request.data.get('reason')
 
     if not all([start_date, end_date, reason]):
@@ -534,12 +535,11 @@ def get_student_leave_requests(request) -> Response:
             logger.error("Unauthorized access attempt by %s with role %s", user.username, user.role)
             return Response({'success': False, 'message': 'Only faculty can access this endpoint'}, status=403)
         
-        # Filter by students in the faculty's sections (optional enhancement)
         leave_requests = StudentLeaveRequest.objects.filter(status='PENDING').select_related('student')
         leave_data = [
             {
                 'id': str(lr.id),
-                'student': lr.student.username,  # Using username (typically USN) for consistency
+                'student': lr.student.username,
                 'student_name': Student.objects.get(user=lr.student).name,
                 'start_date': lr.start_date.strftime('%Y-%m-%d'),
                 'end_date': lr.end_date.strftime('%Y-%m-%d'),
@@ -568,7 +568,7 @@ def manage_student_leave_request(request) -> Response:
         return Response({'success': False, 'message': 'Authentication token required'}, status=401)
 
     leave_id = request.data.get('leave_id')
-    action = request.data.get('action')  # 'APPROVE' or 'REJECT'
+    action = request.data.get('action')
     if not leave_id or not action:
         logger.error("Missing required fields: leave_id=%s, action=%s", leave_id, action)
         return Response({'success': False, 'message': 'Leave ID and action are required'}, status=400)
@@ -585,7 +585,7 @@ def manage_student_leave_request(request) -> Response:
         
         leave_request = StudentLeaveRequest.objects.get(id=leave_id, status='PENDING')
         leave_request.status = 'APPROVED' if action == 'APPROVE' else 'REJECTED'
-        leave_request.reviewed_at = timezone.now()  # Use timezone-aware datetime
+        leave_request.reviewed_at = timezone.now()
         leave_request.reviewed_by = user
         leave_request.save()
         logger.info("Student leave request %s %sd by %s", leave_id, action.lower(), user.username)
@@ -599,3 +599,177 @@ def manage_student_leave_request(request) -> Response:
     except Exception as e:
         logger.error("Error managing student leave request: %s", str(e))
         return Response({'success': False, 'message': f'Error managing leave request: {str(e)}'}, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsTeacher])
+def bulk_enroll(request) -> Response:
+    logger.info("Received bulk_enroll request")
+    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
+    if not token:
+        logger.error("Authentication token missing")
+        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
+
+    excel_file = request.FILES.get('excel_file')
+    if not excel_file:
+        logger.error("No Excel file provided")
+        return Response({'success': False, 'message': 'Excel file is required'}, status=400)
+
+    # Validate file extension
+    if not excel_file.name.endswith(('.xls', '.xlsx')):
+        logger.error("Invalid file format: %s", excel_file.name)
+        return Response({'success': False, 'message': 'File must be .xls or .xlsx'}, status=400)
+
+    try:
+        # Read Excel file using pandas
+        df = pd.read_excel(excel_file, sheet_name=0)
+        logger.info("Raw column names in Excel: %s", df.columns.tolist())
+        df.columns = df.columns.str.strip().str.upper()
+        logger.info("Processed column names: %s", df.columns.tolist())
+
+        required_columns = ['NAME', 'USN', 'SEMESTER', 'SECTION', 'MAIL ID']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            logger.error("Missing required columns in Excel: %s", missing_columns)
+            return Response({
+                'success': False,
+                'message': f'Missing required columns: {", ".join(missing_columns)}'
+            }, status=400)
+
+        enrolled_students = []
+        updated_students = []
+        warnings = []
+        default_password = "default123"
+        all_students = load_all_students()
+
+        for index, row in df.iterrows():
+            name = str(row['NAME']).strip()
+            usn = str(row['USN']).strip()
+            semester = str(row['SEMESTER']).strip()
+            section = str(row['SECTION']).strip()
+            email = str(row['MAIL ID']).strip()
+
+            # Validate row data
+            if not all([name, usn, semester, section, email]):
+                warnings.append(f"Row {index + 2}: Missing data - {name} ({usn})")
+                logger.warning("Skipping row %d due to missing data: name=%s, usn=%s, semester=%s, section=%s, email=%s",
+                              index + 2, name, usn, semester, section, email)
+                continue
+
+            try:
+                # Check for existing student
+                existing_student = Student.objects.filter(usn=usn).first()
+                if existing_student:
+                    # Update existing student
+                    logger.info("Updating existing student: %s (%s)", existing_student.name, usn)
+                    if name != existing_student.name:
+                        existing_student.name = name
+                        logger.info("Updated name for %s to %s", usn, name)
+                    if semester != existing_student.semester:
+                        existing_student.semester = semester
+                        logger.info("Updated semester for %s to %s", usn, semester)
+                    if section != existing_student.section:
+                        existing_student.section = section
+                        logger.info("Updated section for %s to %s", usn, section)
+                    existing_student.save()  # last_modified updated automatically
+
+                    # Update User model (email)
+                    if email != existing_student.user.email:
+                        if User.objects.filter(email=email).exclude(id=existing_student.user.id).exists():
+                            warnings.append(f"Row {index + 2}: Email in use - {name} ({usn}) with {email}")
+                            logger.warning("Email %s already in use at row %d", email, index + 2)
+                            continue
+                        existing_student.user.email = email
+                        existing_student.user.save()
+                        logger.info("Updated email for %s to %s", usn, email)
+
+                    # Update pickle file entry
+                    student_data = next((s for s in all_students if s['usn'] == usn), None)
+                    if student_data:
+                        student_data.update({
+                            'name': name,
+                            'semester': semester,
+                            'section': section,
+                        })
+                        logger.info("Updated pickle data for student %s", usn)
+                    else:
+                        student_data = {
+                            'name': name,
+                            'usn': usn,
+                            'semester': semester,
+                            'section': section,
+                            'encodings': []
+                        }
+                        all_students.append(student_data)
+                        logger.info("Added updated student %s to pickle", usn)
+
+                    updated_students.append({'name': name, 'usn': usn})
+                else:
+                    # Check for email uniqueness for new student
+                    if User.objects.filter(email=email).exists():
+                        warnings.append(f"Row {index + 2}: Email in use - {name} ({usn}) with {email}")
+                        logger.warning("Email %s already in use at row %d", email, index + 2)
+                        continue
+
+                    # Create new User and Student
+                    user = User.objects.create_user(
+                        username=usn,
+                        email=email,
+                        password=default_password,
+                        role='student'
+                    )
+                    student = Student.objects.create(
+                        name=name,
+                        usn=usn,
+                        semester=semester,
+                        section=section,
+                        user=user
+                    )
+                    enrolled_students.append({'name': name, 'usn': usn})
+
+                    # Add to pickle data
+                    student_data = {
+                        'name': name,
+                        'usn': usn,
+                        'semester': semester,
+                        'section': section,
+                        'encodings': []
+                    }
+                    all_students.append(student_data)
+                    logger.info("Enrolled new student: %s (%s) at row %d", name, usn, index + 2)
+
+            except Exception as e:
+                warnings.append(f"Row {index + 2}: Error - {name} ({usn}) - {str(e)}")
+                logger.error("Error processing student at row %d: %s", index + 2, str(e))
+
+        if not enrolled_students and not updated_students:
+            logger.error("No students enrolled or updated from the Excel file")
+            return Response({
+                'success': False,
+                'message': 'No students enrolled or updated. Check warnings for details.',
+                'warnings': warnings
+            }, status=400)
+
+        # Update pickle file with all students
+        try:
+            with open(settings.PICKLE_FILE, 'wb') as f:
+                for s in all_students:
+                    pickle.dump(s, f)
+            logger.info("Updated pickle file with %d new students and %d updated students", len(enrolled_students), len(updated_students))
+        except PermissionError as e:
+            logger.error("Permission denied writing to pickle file: %s", str(e))
+            return Response({'success': False, 'message': 'Permission denied updating student data'}, status=500)
+
+        response_data = {
+            'success': True,
+            'message': f"Successfully enrolled {len(enrolled_students)} new students and updated {len(updated_students)} existing students. Default password for new students is 'default123'.",
+            'enrolled_students': enrolled_students,
+            'updated_students': updated_students
+        }
+        if warnings:
+            response_data['warnings'] = warnings
+        logger.info("Bulk enrollment completed: %d new students enrolled, %d students updated, %d warnings", len(enrolled_students), len(updated_students), len(warnings))
+        return Response(response_data, status=201)
+
+    except Exception as e:
+        logger.error("Error processing bulk enrollment: %s", str(e))
+        return Response({'success': False, 'message': f'Error processing bulk enrollment: {str(e)}'}, status=500)
