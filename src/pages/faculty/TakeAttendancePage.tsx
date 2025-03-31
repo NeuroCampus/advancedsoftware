@@ -10,7 +10,7 @@ import { motion } from 'framer-motion';
 
 const TakeAttendancePage: React.FC = () => {
   const navigate = useNavigate();
-  const { semester, section, subject, token, role, logout } = useUser(); // Added role and logout
+  const { semester, section, subject, token, role, logout } = useUser();
   const [photos, setPhotos] = useState<File[]>([]);
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [showCamera, setShowCamera] = useState(false);
@@ -21,6 +21,7 @@ const TakeAttendancePage: React.FC = () => {
     present?: string[];
     absent?: string[];
     sheetUrl?: string;
+    facultyName?: string; // Added to store faculty name
   } | null>(null);
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -90,9 +91,7 @@ const TakeAttendancePage: React.FC = () => {
 
     try {
       const response = await axios.post('http://localhost:8000/api/faculty/take-attendance/', formData, {
-        headers: {
-          'Authorization': `Bearer ${token}`, // Removed Content-Type; axios handles it
-        },
+        headers: { 'Authorization': `Bearer ${token}` },
       });
       setResult({
         success: true,
@@ -100,6 +99,7 @@ const TakeAttendancePage: React.FC = () => {
         present: response.data.present_students,
         absent: response.data.absent_students,
         sheetUrl: response.data.sheet_url,
+        facultyName: response.data.faculty_name, // Expecting backend to provide this
       });
     } catch (err: any) {
       console.log('Error Response:', err.response?.data);
@@ -139,7 +139,9 @@ const TakeAttendancePage: React.FC = () => {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.5 }}
             >
-              <p className={`font-medium ${result.success ? 'text-green-700' : 'text-red-700'}`}>{result.message}</p>
+              <p className={`font-medium ${result.success ? 'text-green-700' : 'text-red-700'}`}>
+                {result.message} {result.success && result.facultyName && `(Taken by: ${result.facultyName})`}
+              </p>
               {result.success && result.present && result.absent && (
                 <div className="mt-4">
                   <div className="grid md:grid-cols-2 gap-4">

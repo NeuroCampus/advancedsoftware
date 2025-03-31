@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useUser } from '../contexts/UserContext';
 import { Line } from 'react-chartjs-2';
@@ -15,11 +16,21 @@ import {
 import { motion } from 'framer-motion';
 import { LogOut, BarChart2, FileText, CheckCircle, XCircle, Calendar } from 'lucide-react';
 
-// Register Chart.js components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
+interface AttendanceEntry {
+  date: string;
+  status: 'Present' | 'Absent';
+  faculty: string;
+}
+
+interface AttendanceData {
+  [subject: string]: AttendanceEntry[];
+}
+
 const StudentDashboard: React.FC = () => {
-  const [attendanceData, setAttendanceData] = useState<any>(null);
+  const navigate = useNavigate();
+  const [attendanceData, setAttendanceData] = useState<AttendanceData | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -27,11 +38,10 @@ const StudentDashboard: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [showAttendanceSection, setShowAttendanceSection] = useState<boolean>(false); // New state for attendance
-  const [showLeaveSection, setShowLeaveSection] = useState<boolean>(false); // Existing state for leave
+  const [showAttendanceSection, setShowAttendanceSection] = useState<boolean>(false);
+  const [showLeaveSection, setShowLeaveSection] = useState<boolean>(false);
   const { token, user_id, logout } = useUser();
 
-  // Fetch attendance data on mount
   useEffect(() => {
     const fetchAttendance = async () => {
       if (!token || !user_id) {
@@ -45,6 +55,7 @@ const StudentDashboard: React.FC = () => {
         const response = await axios.get('http://localhost:8000/api/student-attendance/', {
           headers: { Authorization: `Bearer ${token}` },
         });
+        console.log('API Response:', JSON.stringify(response.data, null, 2));
         if (response.data.success) {
           const data = response.data.attendance;
           if (Object.keys(data).length === 0) {
@@ -57,16 +68,18 @@ const StudentDashboard: React.FC = () => {
         }
       } catch (err: any) {
         setError(err.response?.data?.message || 'Error fetching attendance data');
-        if (err.response?.status === 401) logout();
+        if (err.response?.status === 401) {
+          logout();
+          navigate('/login');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchAttendance();
-  }, [token, user_id, logout]);
+  }, [token, user_id, logout, navigate]);
 
-  // Fetch leave requests on mount
   useEffect(() => {
     const fetchLeaveRequests = async () => {
       if (!token || !user_id) return;
@@ -84,16 +97,18 @@ const StudentDashboard: React.FC = () => {
         }
       } catch (err: any) {
         setError(err.response?.data?.message || 'Error fetching leave requests');
-        if (err.response?.status === 401) logout();
+        if (err.response?.status === 401) {
+          logout();
+          navigate('/login');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchLeaveRequests();
-  }, [token, user_id, logout]);
+  }, [token, user_id, logout, navigate]);
 
-  // Handle leave request submission
   const handleSubmitLeaveRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -126,13 +141,15 @@ const StudentDashboard: React.FC = () => {
       }
     } catch (err: any) {
       setError(err.response?.data?.message || 'Error submitting leave request');
-      if (err.response?.status === 401) logout();
+      if (err.response?.status === 401) {
+        logout();
+        navigate('/login');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Prepare chart data
   const prepareChartData = () => {
     if (!attendanceData) return null;
 
@@ -151,7 +168,7 @@ const StudentDashboard: React.FC = () => {
         label: subject,
         data: labels.map((date) => {
           const entry = attendanceData[subject].find((e: any) => e.date === date);
-          return entry ? entry.status : null;
+          return entry ? (entry.status === 'Present' ? 1 : 0) : null;
         }),
         borderColor: color,
         backgroundColor: color + '33',
@@ -221,7 +238,10 @@ const StudentDashboard: React.FC = () => {
             Student Dashboard
           </h1>
           <motion.button
-            onClick={logout}
+            onClick={() => {
+              logout();
+              navigate('/login');
+            }}
             className="flex items-center bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded transition-colors"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -232,7 +252,6 @@ const StudentDashboard: React.FC = () => {
         </div>
         <p className="text-lg text-gray-600 mb-6">Hey there! How’s your day going?</p>
 
-        {/* Buttons to toggle sections */}
         <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
           <motion.button
             onClick={() => setShowAttendanceSection(!showAttendanceSection)}
@@ -254,7 +273,6 @@ const StudentDashboard: React.FC = () => {
           </motion.button>
         </div>
 
-        {/* Success/Error Messages */}
         {success && (
           <motion.div
             className="mb-6 p-4 bg-green-100 text-green-700 rounded-lg"
@@ -292,7 +310,6 @@ const StudentDashboard: React.FC = () => {
           </motion.p>
         ) : (
           <>
-            {/* Attendance Section */}
             {showAttendanceSection && attendanceData && (
               <>
                 <motion.div
@@ -319,10 +336,11 @@ const StudentDashboard: React.FC = () => {
                         <th className="p-4 font-semibold">Subject</th>
                         <th className="p-4 font-semibold">Date</th>
                         <th className="p-4 font-semibold">Status</th>
+                        <th className="p-4 font-semibold">Faculty</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.entries(attendanceData).flatMap(([subject, entries]: [string, any[]]) =>
+                      {Object.entries(attendanceData).flatMap(([subject, entries]: [string, AttendanceEntry[]]) =>
                         entries.map((entry, idx) => (
                           <motion.tr
                             key={`${subject}-${entry.date}-${idx}`}
@@ -335,13 +353,15 @@ const StudentDashboard: React.FC = () => {
                               <Calendar size={18} className="mr-2 text-blue-600" />
                               {subject}
                             </td>
-                            <td className="p-4 text-gray-700">{entry.date}</td>
+                            <td className="p-4 text-gray-700">
+                              {new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </td>
                             <td
                               className={`p-4 font-medium flex items-center ${
-                                entry.status === 1 ? 'text-green-600' : 'text-red-600'
+                                entry.status === 'Present' ? 'text-green-600' : 'text-red-600'
                               }`}
                             >
-                              {entry.status === 1 ? (
+                              {entry.status === 'Present' ? (
                                 <>
                                   <CheckCircle size={18} className="mr-2" />
                                   Present
@@ -353,6 +373,7 @@ const StudentDashboard: React.FC = () => {
                                 </>
                               )}
                             </td>
+                            <td className="p-4 text-gray-700">{entry.faculty}</td>
                           </motion.tr>
                         ))
                       )}
@@ -362,10 +383,8 @@ const StudentDashboard: React.FC = () => {
               </>
             )}
 
-            {/* Leave Request Section */}
             {showLeaveSection && (
               <>
-                {/* Leave Request Form */}
                 <motion.div
                   className="mb-8"
                   initial={{ opacity: 0, y: 20 }}
@@ -421,7 +440,6 @@ const StudentDashboard: React.FC = () => {
                   </form>
                 </motion.div>
 
-                {/* Leave Requests List */}
                 {leaveRequests.length > 0 && (
                   <motion.div
                     className="mt-8"

@@ -1,5 +1,5 @@
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django_otp.plugins.otp_email.models import EmailDevice
@@ -153,18 +153,25 @@ def get_student_attendance(request) -> Response:
         return Response({'success': False, 'message': 'Authentication token required'}, status=401)
     try:
         user = request.user
-        if user.role != 'student':  # Redundant due to IsStudent, but kept for clarity
+        if user.role != 'student':
             return Response({'success': False, 'message': 'Only students can access this endpoint'}, status=403)
         student = Student.objects.get(user=user)
-        attendance_details = AttendanceDetail.objects.filter(student=student).select_related('record')
+        attendance_details = AttendanceDetail.objects.filter(student=student).select_related('record__faculty')
         attendance_data = {}
         for detail in attendance_details:
             record = detail.record
             subject = record.subject
             date = record.date.strftime('%Y-%m-%d')
+            faculty_name = record.faculty.get_full_name() if record.faculty else 'Unknown'
+            if not faculty_name and record.faculty:  # Fallback to username
+                faculty_name = record.faculty.username
             if subject not in attendance_data:
                 attendance_data[subject] = []
-            attendance_data[subject].append({'date': date, 'status': 1 if detail.status else 0})
+            attendance_data[subject].append({
+                'date': date,
+                'status': 'Present' if detail.status else 'Absent',
+                'faculty': faculty_name
+            })
         return Response({
             'success': True,
             'message': 'Attendance data retrieved successfully',

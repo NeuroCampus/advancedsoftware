@@ -39,6 +39,10 @@ def take_attendance(request) -> Response:
         logger.error("Missing required fields: subject=%s, section=%s, semester=%s, files=%s", subject, section, semester, len(files))
         return Response({'success': False, 'message': 'Missing required fields'}, status=400)
     
+    # Get the faculty member from the authenticated user
+    faculty = request.user  # Assuming the user is a Faculty model instance or has a name attribute
+    faculty_name = faculty.get_full_name() if hasattr(faculty, 'get_full_name') else faculty.username
+
     try:
         logger.info("Fetching Google Sheet ID for %s_%s_%s", semester, subject, section)
         sheet_id = get_google_sheet_id(subject, section, semester)
@@ -49,8 +53,16 @@ def take_attendance(request) -> Response:
         sheet_id = None
     
     try:
-        attendance_record = AttendanceRecord.objects.create(semester=semester, section=section, subject=subject, sheet_id=sheet_id)
-        logger.info("Created AttendanceRecord with ID: %s", attendance_record.id)
+        # Store faculty with the attendance record
+        attendance_record = AttendanceRecord.objects.create(
+            semester=semester,
+            section=section,
+            subject=subject,
+            sheet_id=sheet_id,
+            faculty=request.user,
+            status='completed'
+        )
+        logger.info("Created AttendanceRecord with ID: %s by %s", attendance_record.id, faculty_name)
     except Exception as e:
         logger.error("Error creating attendance record: %s", str(e))
         return Response({'success': False, 'message': f'Error creating attendance record: {str(e)}'}, status=500)
@@ -114,6 +126,7 @@ def take_attendance(request) -> Response:
     try:
         with open(file_path, 'a') as report:
             report.write(f"\n--- Attendance Session: {timestamp} ---\n")
+            report.write(f"Faculty: {faculty_name}\n")  # Added faculty name to the file
             report.write("Present Students: " + ", ".join([name for name, _ in present_students]) + "\n")
             report.write("Absent Students: " + ", ".join([name for name, _ in absent_students]) + "\n")
         logger.info("Wrote attendance to file: %s", file_path)
@@ -142,10 +155,11 @@ def take_attendance(request) -> Response:
         'message': f"Attendance taken for {semester} {subject} ({section})",
         'present_students': [f"{name} ({usn})" for name, usn in present_students],
         'absent_students': [f"{name} ({usn})" for name, usn in absent_students],
+        'faculty_name': faculty_name,  # Added faculty name to response
     }
     if sheet_url:
         response_data['sheet_url'] = sheet_url
-    logger.info("Attendance process completed successfully")
+    logger.info("Attendance process completed successfully by %s", faculty_name)
     return Response(response_data)
 
 @api_view(['POST'])
