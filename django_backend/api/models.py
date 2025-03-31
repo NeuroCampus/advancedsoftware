@@ -41,7 +41,7 @@ class Student(models.Model):
         null=True,
         related_name='student_profile'
     )
-    last_modified = models.DateTimeField(auto_now=True)  # Added to track updates
+    last_modified = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.name} ({self.usn})"
@@ -57,9 +57,22 @@ class AttendanceRecord(models.Model):
     subject = models.CharField(max_length=100)
     sheet_id = models.CharField(max_length=255, blank=True, null=True)
     file_path = models.CharField(max_length=255, blank=True, null=True)
+    faculty = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='attendance_records',
+        limit_choices_to={'role': 'teacher'}
+    )
+    status = models.CharField(  # Added status field
+        max_length=20,
+        choices=(('pending', 'Pending'), ('completed', 'Completed')),
+        default='completed'
+    )
 
     def __str__(self):
-        return f"{self.subject} - {self.date} - Sem {self.semester} Sec {self.section}"
+        faculty_name = self.faculty.get_full_name() if self.faculty else "Unknown"
+        return f"{self.subject} - {self.date} - Sem {self.semester} Sec {self.section} by {faculty_name}"
 
 class AttendanceDetail(models.Model):
     record = models.ForeignKey(AttendanceRecord, on_delete=models.CASCADE, related_name='details')
