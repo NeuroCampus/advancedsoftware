@@ -48,6 +48,22 @@ const MainContent = () => {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route
+          path="/student-dashboard"
+          element={
+            <ProtectedRoute requiredRoles={['student']}>
+              <StudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/hod-dashboard"
+          element={
+            <ProtectedRoute requiredRoles={['hod']}>
+              <HODDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/faculty-dashboard"
           element={
             <ProtectedRoute requiredRoles={['teacher']}>
@@ -92,22 +108,6 @@ const MainContent = () => {
           element={
             <ProtectedRoute requiredRoles={['teacher', 'hod']}>
               <AttendanceStatisticsPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/student-dashboard"
-          element={
-            <ProtectedRoute requiredRoles={['student']}>
-              <StudentDashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/hod-dashboard"
-          element={
-            <ProtectedRoute requiredRoles={['hod']}>
-              <HODDashboard />
             </ProtectedRoute>
           }
         />

@@ -2,7 +2,7 @@ from django.urls import path
 from .views import hod_views, student_views, admin_views, faculty_views
 
 urlpatterns = [
-    # Student endpoints (unprefixed as per original design)
+    # Student endpoints
     path('login/', student_views.login_view, name='login'),
     path('verify-otp/', student_views.verify_otp, name='verify_otp'),
     path('resend-otp/', student_views.resend_otp, name='resend_otp'),
@@ -16,7 +16,7 @@ urlpatterns = [
     # Faculty endpoints
     path('faculty/take-attendance/', faculty_views.take_attendance, name='take_attendance'),
     path('faculty/enroll/', faculty_views.enroll, name='enroll_student'),
-    path('faculty/bulk-enroll/', faculty_views.bulk_enroll, name='bulk_enroll'),  # New endpoint added
+    path('faculty/bulk-enroll/', faculty_views.bulk_enroll, name='bulk_enroll'),
     path('faculty/generate-statistics/', faculty_views.generate_statistics, name='faculty_generate_statistics'),
     path('faculty/download-pdf/<str:filename>/', faculty_views.download_pdf, name='download_pdf'),
     path('faculty/students/', faculty_views.get_students, name='get_students'),
@@ -24,6 +24,7 @@ urlpatterns = [
     path('faculty/leave-requests/', faculty_views.get_leave_requests, name='faculty_get_leave_requests'),
     path('faculty/student-leave-requests/', faculty_views.get_student_leave_requests, name='get_student_leave_requests'),
     path('faculty/manage-student-leave-request/', faculty_views.manage_student_leave_request, name='manage_student_leave_request'),
+    path('faculty/assignments/', faculty_views.get_faculty_assignments, name='get_faculty_assignments'),
 
     # HOD endpoints
     path('hod/subjects/', hod_views.get_subjects, name='get_subjects'),
@@ -32,7 +33,8 @@ urlpatterns = [
     path('hod/download-file/<str:filename>/', hod_views.download_file, name='download_file'),
     path('hod/leave-requests/', hod_views.get_leave_requests, name='hod_get_leave_requests'),
     path('hod/manage-leave-request/', hod_views.manage_leave_request, name='manage_leave_request'),
-
-    # Admin endpoints (assuming admin_views is empty or placeholder for now)
-    # Add admin paths here if needed, e.g., path('admin/some-endpoint/', admin_views.some_view, name='some_view'),
+    path('hod/assign-proctor/', hod_views.assign_proctor, name='assign_proctor'),
+    path('hod/assign-faculty/', hod_views.assign_faculty, name='assign_faculty'),
+    path('hod/branches/', hod_views.get_branches, name='get_branches'),
+    path('api/hod/faculty/', hod_views.get_faculty, name='hod_faculty'),
 ]

@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
-import { FileText, Download, BarChart, Users } from 'lucide-react';
+import { FileText, Download, BarChart, Users, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
 import Header from '../../components/Header';
-import { ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Bar } from 'react-chartjs-2';
 import {
@@ -21,15 +20,19 @@ import Confetti from 'react-confetti';
 // Register Chart.js components
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
-interface AttendanceFile { id: string; name: string; }
-interface AttendanceStatistics { 
-  above75: Array<{ student: string; percentage: number; present: number; absent: number }>; 
-  below75: Array<{ student: string; percentage: number; present: number; absent: number }>; 
+interface AttendanceFile {
+  id: string;
+  name: string;
+}
+
+interface AttendanceStatistics {
+  above75: Array<{ student: string; percentage: number; present: number; absent: number }>;
+  below75: Array<{ student: string; percentage: number; present: number; absent: number }>;
 }
 
 const AttendanceStatisticsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { semester, section, subject, token } = useUser();
+  const { semester, section, subject, token, logout } = useUser();
   const [files, setFiles] = useState<AttendanceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string>('');
   const [statistics, setStatistics] = useState<AttendanceStatistics | null>(null);
@@ -42,22 +45,34 @@ const AttendanceStatisticsPage: React.FC = () => {
   useEffect(() => {
     const fetchFiles = async () => {
       if (!token) {
-        setError('You must be logged in to view attendance files.');
+        setError('Session expired. Please log in again.');
+        logout();
+        navigate('/login');
         return;
       }
+      setLoading(true);
       try {
-        const response = await axios.get('http://localhost:8000/api/hod/attendance-files/', {
+        const response = await axios.get('http://localhost:8000/api/faculty/attendance-files/', {
           params: { semester, section, subject },
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
-        if (response.data.success) setFiles(response.data.files);
-        else setError('Failed to load attendance files');
-      } catch (err) {
-        setError('An error occurred while fetching attendance files');
+        if (response.data.success) {
+          setFiles(response.data.files || []);
+        } else {
+          setError(response.data.message || 'Failed to load attendance files');
+        }
+      } catch (err: any) {
+        setError(err.response?.data?.message || 'Error fetching attendance files');
+        if (err.response?.status === 401) {
+          logout();
+          navigate('/login');
+        }
+      } finally {
+        setLoading(false);
       }
     };
     fetchFiles();
-  }, [semester, section, subject, token]);
+  }, [semester, section, subject, token, logout, navigate]);
 
   const generateStatistics = async () => {
     if (!selectedFile) {
@@ -65,7 +80,9 @@ const AttendanceStatisticsPage: React.FC = () => {
       return;
     }
     if (!token) {
-      setError('You must be logged in to generate statistics.');
+      setError('Session expired. Please log in again.');
+      logout();
+      navigate('/login');
       return;
     }
 
@@ -79,12 +96,16 @@ const AttendanceStatisticsPage: React.FC = () => {
       const response = await axios.post(
         'http://localhost:8000/api/faculty/generate-statistics/',
         { file_id: selectedFile },
-        { headers: { 'Authorization': `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.data.success) {
-        setStatistics({ above75: response.data.above_75, below75: response.data.below_75 });
-        setPdfUrl(response.data.pdf_url);
-        if (response.data.above_75.length > response.data.below_75.length) {
+        const stats = {
+          above75: response.data.above_75 || [],
+          below75: response.data.below_75 || [],
+        };
+        setStatistics(stats);
+        setPdfUrl(response.data.pdf_url || '');
+        if (stats.above75.length > stats.below75.length) {
           setShowConfetti(true);
           setTimeout(() => setShowConfetti(false), 5000);
         }
@@ -92,7 +113,11 @@ const AttendanceStatisticsPage: React.FC = () => {
         setError(response.data.message || 'Failed to generate statistics');
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'An error occurred while generating statistics');
+      setError(err.response?.data?.message || 'Error generating statistics');
+      if (err.response?.status === 401) {
+        logout();
+        navigate('/login');
+      }
     } finally {
       setLoading(false);
     }
@@ -100,14 +125,17 @@ const AttendanceStatisticsPage: React.FC = () => {
 
   const handleDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
-    if (!pdfUrl || !token) return;
+    if (!pdfUrl || !token) {
+      setError('No PDF available or session expired.');
+      return;
+    }
 
     setDownloadLoading(true);
     setError('');
 
     try {
       const response = await axios.get(`http://localhost:8000${pdfUrl}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` },
         responseType: 'blob',
       });
 
@@ -121,8 +149,11 @@ const AttendanceStatisticsPage: React.FC = () => {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(downloadUrl);
     } catch (err: any) {
-      console.error('Error downloading PDF:', err);
       setError(err.response?.data?.message || 'Failed to download PDF');
+      if (err.response?.status === 401) {
+        logout();
+        navigate('/login');
+      }
     } finally {
       setDownloadLoading(false);
     }
@@ -147,16 +178,10 @@ const AttendanceStatisticsPage: React.FC = () => {
 
   const chartOptions = {
     responsive: true,
+    maintainAspectRatio: false,
     animation: {
       duration: 2000,
       easing: 'easeInOutQuart',
-      onProgress: (animation: any) => {
-        const chart = animation.chart;
-        chart.data.datasets[0].data = chart.data.datasets[0].data.map((value: number) =>
-          value * (animation.currentStep / animation.numSteps)
-        );
-        chart.update();
-      },
     },
     plugins: {
       legend: { display: false },
@@ -165,6 +190,7 @@ const AttendanceStatisticsPage: React.FC = () => {
         text: 'Attendance Distribution',
         font: { size: 24, family: 'Poppins', weight: 'bold' },
         color: '#1F2937',
+        padding: { top: 10, bottom: 20 },
       },
       tooltip: {
         backgroundColor: 'rgba(55, 65, 81, 0.9)',
@@ -176,7 +202,12 @@ const AttendanceStatisticsPage: React.FC = () => {
       y: {
         beginAtZero: true,
         ticks: { stepSize: 1, font: { size: 12, family: 'Poppins' }, color: '#4B5563' },
-        title: { display: true, text: 'Number of Students', font: { size: 16, family: 'Poppins' }, color: '#4B5563' },
+        title: {
+          display: true,
+          text: 'Number of Students',
+          font: { size: 16, family: 'Poppins' },
+          color: '#4B5563',
+        },
         grid: { color: 'rgba(209, 213, 219, 0.3)' },
       },
       x: {
@@ -197,22 +228,22 @@ const AttendanceStatisticsPage: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: 'easeOut' }}
         >
-          <h1 className="text-4xl font-extrabold text-gray-800 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
-            Attendance Statistics
-          </h1>
-          <div className="flex justify-between items-center mb-6">
-            <p className="text-lg text-gray-600">
-              Semester {semester} | Section {section} | Subject: {subject}
-            </p>
+          <div className="flex items-center mb-6">
             <motion.button
-              onClick={() => navigate(-1)}
-              className="flex items-center bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded transition-colors"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              onClick={() => navigate('/options')}
+              className="text-gray-600 hover:text-gray-800 mr-4"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
             >
-              <ArrowLeft size={18} className="mr-1" /> Back
+              <ArrowLeft size={24} />
             </motion.button>
+            <h1 className="text-4xl font-extrabold text-gray-800 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+              Attendance Statistics
+            </h1>
           </div>
+          <p className="text-lg text-gray-600 mb-6">
+            Semester {semester} | Section {section} | Subject: {subject}
+          </p>
 
           {error && (
             <motion.div
@@ -234,8 +265,16 @@ const AttendanceStatisticsPage: React.FC = () => {
             <label htmlFor="file" className="block text-gray-700 font-medium mb-2 flex items-center">
               <FileText size={18} className="mr-2 text-blue-600" /> Select Attendance File
             </label>
-            {files.length > 0 ? (
-              <div className="flex items-center gap-4">
+            {loading && !files.length ? (
+              <p className="text-gray-500 flex items-center">
+                <svg className="animate-spin h-5 w-5 mr-2 text-gray-500" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Loading files...
+              </p>
+            ) : files.length > 0 ? (
+              <div className="flex items-center gap-4 flex-wrap">
                 <select
                   id="file"
                   value={selectedFile}
@@ -243,14 +282,18 @@ const AttendanceStatisticsPage: React.FC = () => {
                   className="flex-grow p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 hover:bg-gray-100 transition-colors"
                 >
                   <option value="">-- Select a file --</option>
-                  {files.map(file => (
-                    <option key={file.id} value={file.id}>{file.name}</option>
+                  {files.map((file) => (
+                    <option key={file.id} value={file.id}>
+                      {file.name}
+                    </option>
                   ))}
                 </select>
                 <motion.button
                   onClick={generateStatistics}
                   disabled={!selectedFile || loading}
-                  className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded transition-colors ${!selectedFile || loading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded transition-colors ${
+                    !selectedFile || loading ? 'opacity-70 cursor-not-allowed' : ''
+                  }`}
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                 >
@@ -279,7 +322,7 @@ const AttendanceStatisticsPage: React.FC = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.4 }}
             >
-              <h3 className="text-2xl font-bold text-gray-800 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+              <h3 className="text-2xl font-bold text-gray-800 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
                 Attendance Results
               </h3>
 
@@ -290,7 +333,9 @@ const AttendanceStatisticsPage: React.FC = () => {
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ duration: 0.8, delay: 0.6 }}
               >
-                {chartData && <Bar data={chartData} options={chartOptions} />}
+                <div className="h-80">
+                  {chartData && <Bar data={chartData} options={chartOptions} />}
+                </div>
               </motion.div>
 
               {/* Detailed Tables */}
@@ -306,11 +351,13 @@ const AttendanceStatisticsPage: React.FC = () => {
                   </h4>
                   {statistics.above75.length > 0 ? (
                     <div className="max-h-80 overflow-y-auto">
-                      <table className="w-full">
+                      <table className="w-full text-sm">
                         <thead>
-                          <tr className="bg-gradient-to-r from-green-200 to-green-100">
+                          <tr className="bg-gradient-to-r from-green-200 to-green-100 sticky top-0">
                             <th className="text-left p-2 font-semibold">Student</th>
-                            <th className="text-right p-2 font-semibold">Percentage</th>
+                            <th className="text-right p-2 font-semibold">%</th>
+                            <th className="text-right p-2 font-semibold">Present</th>
+                            <th className="text-right p-2 font-semibold">Absent</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -323,7 +370,11 @@ const AttendanceStatisticsPage: React.FC = () => {
                               transition={{ duration: 0.3, delay: index * 0.05 }}
                             >
                               <td className="p-2 text-gray-700">{item.student}</td>
-                              <td className="text-right p-2 font-medium text-green-700">{item.percentage.toFixed(2)}%</td>
+                              <td className="text-right p-2 font-medium text-green-700">
+                                {item.percentage.toFixed(2)}%
+                              </td>
+                              <td className="text-right p-2 text-gray-600">{item.present}</td>
+                              <td className="text-right p-2 text-gray-600">{item.absent}</td>
                             </motion.tr>
                           ))}
                         </tbody>
@@ -344,11 +395,13 @@ const AttendanceStatisticsPage: React.FC = () => {
                   </h4>
                   {statistics.below75.length > 0 ? (
                     <div className="max-h-80 overflow-y-auto">
-                      <table className="w-full">
+                      <table className="w-full text-sm">
                         <thead>
-                          <tr className="bg-gradient-to-r from-red-200 to-red-100">
+                          <tr className="bg-gradient-to-r from-red-200 to-red-100 sticky top-0">
                             <th className="text-left p-2 font-semibold">Student</th>
-                            <th className="text-right p-2 font-semibold">Percentage</th>
+                            <th className="text-right p-2 font-semibold">%</th>
+                            <th className="text-right p-2 font-semibold">Present</th>
+                            <th className="text-right p-2 font-semibold">Absent</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -361,7 +414,11 @@ const AttendanceStatisticsPage: React.FC = () => {
                               transition={{ duration: 0.3, delay: index * 0.05 }}
                             >
                               <td className="p-2 text-gray-700">{item.student}</td>
-                              <td className="text-right p-2 font-medium text-red-700">{item.percentage.toFixed(2)}%</td>
+                              <td className="text-right p-2 font-medium text-red-700">
+                                {item.percentage.toFixed(2)}%
+                              </td>
+                              <td className="text-right p-2 text-gray-600">{item.present}</td>
+                              <td className="text-right p-2 text-gray-600">{item.absent}</td>
                             </motion.tr>
                           ))}
                         </tbody>
@@ -382,7 +439,9 @@ const AttendanceStatisticsPage: React.FC = () => {
                 >
                   <a
                     href={`http://localhost:8000${pdfUrl}`}
-                    className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-full transition-colors shadow-md ${downloadLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-full transition-colors shadow-md ${
+                      downloadLoading ? 'opacity-70 cursor-not-allowed' : ''
+                    }`}
                     onClick={handleDownload}
                   >
                     <Download size={18} className="mr-2" />

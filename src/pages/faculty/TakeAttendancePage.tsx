@@ -1,11 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
-import { Camera, Upload, Check, Users, X } from 'lucide-react';
+import { Camera, Upload, Check, Users, X, ArrowLeft } from 'lucide-react';
 import Webcam from 'react-webcam';
 import axios from 'axios';
 import Header from '../../components/Header';
-import { ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const TakeAttendancePage: React.FC = () => {
@@ -21,7 +20,7 @@ const TakeAttendancePage: React.FC = () => {
     present?: string[];
     absent?: string[];
     sheetUrl?: string;
-    facultyName?: string; // Added to store faculty name
+    facultyName?: string;
   } | null>(null);
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -32,8 +31,8 @@ const TakeAttendancePage: React.FC = () => {
       if (imageSrc) {
         setCapturedImages([...capturedImages, imageSrc]);
         fetch(imageSrc)
-          .then(res => res.blob())
-          .then(blob => {
+          .then((res) => res.blob())
+          .then((blob) => {
             const file = new File([blob], `class-${Date.now()}.jpg`, { type: 'image/jpeg' });
             setPhotos([...photos, file]);
           });
@@ -45,9 +44,9 @@ const TakeAttendancePage: React.FC = () => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
       setPhotos([...photos, ...newFiles]);
-      newFiles.forEach(file => {
+      newFiles.forEach((file) => {
         const reader = new FileReader();
-        reader.onloadend = () => setCapturedImages(prev => [...prev, reader.result as string]);
+        reader.onloadend = () => setCapturedImages((prev) => [...prev, reader.result as string]);
         reader.readAsDataURL(file);
       });
     }
@@ -82,28 +81,39 @@ const TakeAttendancePage: React.FC = () => {
     formData.append('semester', semester || '');
     formData.append('section', section || '');
     formData.append('subject', subject || '');
-    photos.forEach(photo => formData.append('class_images', photo));
-
-    console.log('Submitting with:');
-    console.log('Token:', token);
-    console.log('Role:', role);
-    console.log('FormData:', Object.fromEntries(formData.entries()));
+    photos.forEach((photo) => formData.append('class_images', photo));
 
     try {
       const response = await axios.post('http://localhost:8000/api/faculty/take-attendance/', formData, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
       });
-      setResult({
-        success: true,
-        message: response.data.message,
-        present: response.data.present_students,
-        absent: response.data.absent_students,
-        sheetUrl: response.data.sheet_url,
-        facultyName: response.data.faculty_name, // Expecting backend to provide this
-      });
+      if (response.data.success) {
+        setResult({
+          success: true,
+          message: response.data.message || 'Attendance recorded successfully!',
+          present: response.data.present_students || [],
+          absent: response.data.absent_students || [],
+          sheetUrl: response.data.sheet_url,
+          facultyName: response.data.faculty_name,
+        });
+      } else {
+        setResult({
+          success: false,
+          message: response.data.message || 'Failed to record attendance',
+        });
+      }
     } catch (err: any) {
-      console.log('Error Response:', err.response?.data);
-      setResult({ success: false, message: err.response?.data?.message || 'Attendance failed. Please try again.' });
+      setResult({
+        success: false,
+        message: err.response?.data?.message || 'Attendance failed. Please try again.',
+      });
+      if (err.response?.status === 401) {
+        logout();
+        navigate('/login');
+      }
     } finally {
       setLoading(false);
     }
@@ -114,6 +124,7 @@ const TakeAttendancePage: React.FC = () => {
     setCapturedImages([]);
     setShowCamera(false);
     setResult(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
@@ -126,12 +137,23 @@ const TakeAttendancePage: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: 'easeOut' }}
         >
-          <h2 className="text-4xl font-extrabold text-gray-800 mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
-            Take Attendance
-          </h2>
+          <div className="flex items-center mb-6">
+            <motion.button
+              onClick={() => navigate('/options')}
+              className="text-gray-600 hover:text-gray-800 mr-4"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <ArrowLeft size={24} />
+            </motion.button>
+            <h2 className="text-4xl font-extrabold text-gray-800 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+              Take Attendance
+            </h2>
+          </div>
           <p className="text-lg text-gray-600 mb-6">
             Semester {semester} | Section {section} | Subject: {subject}
           </p>
+
           {result && (
             <motion.div
               className={`mb-6 p-4 rounded-lg ${result.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}
@@ -214,7 +236,7 @@ const TakeAttendancePage: React.FC = () => {
                   {result.success && (
                     <motion.button
                       onClick={resetForm}
-                      className="mt-4 text-blue-600 hover:text-blue-800"
+                      className="mt-4 text-blue-600 hover:text-blue-800 underline"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ duration: 0.5, delay: 0.4 }}
@@ -226,113 +248,126 @@ const TakeAttendancePage: React.FC = () => {
               )}
             </motion.div>
           )}
-          <form onSubmit={handleSubmit}>
-            <motion.div
-              className="mb-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-            >
-              <label className="block text-gray-700 font-medium mb-2">Class Photos (for Attendance)</label>
-              <div className="flex flex-wrap gap-4 mb-4">
-                {capturedImages.map((img, index) => (
-                  <motion.div
-                    key={index}
-                    className="relative"
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <img src={img} alt={`Class ${index + 1}`} className="w-24 h-24 object-cover rounded border border-gray-300" />
-                    <button
-                      type="button"
-                      onClick={() => removePhoto(index)}
-                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+
+          {!result && (
+            <form onSubmit={handleSubmit}>
+              <motion.div
+                className="mb-6"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.2 }}
+              >
+                <label className="block text-gray-700 font-medium mb-2">Class Photos (for Attendance)</label>
+                <div className="flex flex-wrap gap-4 mb-4">
+                  {capturedImages.map((img, index) => (
+                    <motion.div
+                      key={index}
+                      className="relative"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.3 }}
                     >
-                      <X size={16} />
-                    </button>
-                  </motion.div>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <motion.button
-                  type="button"
-                  onClick={() => setShowCamera(!showCamera)}
-                  className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <Camera size={18} className="mr-2" /> {showCamera ? 'Hide Camera' : 'Use Camera'}
-                </motion.button>
-                <motion.button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded transition-colors"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <Upload size={18} className="mr-2" /> Upload Photos
-                </motion.button>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                />
-              </div>
-              {showCamera && (
-                <motion.div
-                  className="mt-4"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.5 }}
-                >
-                  <Webcam
-                    audio={false}
-                    ref={webcamRef}
-                    screenshotFormat="image/jpeg"
-                    className="w-full max-w-md rounded border border-gray-300"
-                  />
+                      <img
+                        src={img}
+                        alt={`Class ${index + 1}`}
+                        className="w-24 h-24 object-cover rounded border border-gray-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(index)}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                      >
+                        <X size={16} />
+                      </button>
+                    </motion.div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-4">
                   <motion.button
                     type="button"
-                    onClick={capturePhoto}
-                    className="mt-2 flex items-center bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded transition-colors"
+                    onClick={() => setShowCamera(!showCamera)}
+                    className="flex items-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors"
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                   >
-                    <Camera size={18} className="mr-2" /> Capture Photo
+                    <Camera size={18} className="mr-2" /> {showCamera ? 'Hide Camera' : 'Use Camera'}
                   </motion.button>
-                </motion.div>
-              )}
-            </motion.div>
-            <motion.div
-              className="flex justify-end gap-4"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, delay: 0.4 }}
-            >
-              <motion.button
-                type="button"
-                onClick={() => navigate(-1)}
-                className="flex items-center bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded transition-colors"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                  <motion.button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded transition-colors"
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <Upload size={18} className="mr-2" /> Upload Photos
+                  </motion.button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                  />
+                </div>
+                {showCamera && (
+                  <motion.div
+                    className="mt-4"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.5 }}
+                  >
+                    <Webcam
+                      audio={false}
+                      ref={webcamRef}
+                      screenshotFormat="image/jpeg"
+                      className="w-full max-w-md rounded border border-gray-300"
+                    />
+                    <motion.button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="mt-2 flex items-center bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded transition-colors"
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                    >
+                      <Camera size={18} className="mr-2" /> Capture Photo
+                    </motion.button>
+                  </motion.div>
+                )}
+              </motion.div>
+              <motion.div
+                className="flex justify-end gap-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5, delay: 0.4 }}
               >
-                <ArrowLeft size={18} className="mr-2" /> Back
-              </motion.button>
-              <motion.button
-                type="submit"
-                disabled={loading}
-                className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded transition-colors ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                {loading ? 'Processing...' : <><Check size={18} className="mr-2" /> Take Attendance</>}
-              </motion.button>
-            </motion.div>
-          </form>
+                <motion.button
+                  type="button"
+                  onClick={() => navigate('/options')}
+                  className="flex items-center bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded transition-colors"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <ArrowLeft size={18} className="mr-2" /> Back
+                </motion.button>
+                <motion.button
+                  type="submit"
+                  disabled={loading}
+                  className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded transition-colors ${
+                    loading ? 'opacity-70 cursor-not-allowed' : ''
+                  }`}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  {loading ? 'Processing...' : (
+                    <>
+                      <Check size={18} className="mr-2" /> Take Attendance
+                    </>
+                  )}
+                </motion.button>
+              </motion.div>
+            </form>
+          )}
         </motion.div>
       </main>
     </div>

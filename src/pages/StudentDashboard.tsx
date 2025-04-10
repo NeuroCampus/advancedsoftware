@@ -1,3 +1,4 @@
+// src/pages/StudentDashboard.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -28,10 +29,21 @@ interface AttendanceData {
   [subject: string]: AttendanceEntry[];
 }
 
+interface LeaveRequest {
+  id: number;
+  start_date: string;
+  end_date: string;
+  reason: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  submitted_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+}
+
 const StudentDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [attendanceData, setAttendanceData] = useState<AttendanceData | null>(null);
-  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [reason, setReason] = useState<string>('');
@@ -55,9 +67,8 @@ const StudentDashboard: React.FC = () => {
         const response = await axios.get('http://localhost:8000/api/student-attendance/', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        console.log('API Response:', JSON.stringify(response.data, null, 2));
         if (response.data.success) {
-          const data = response.data.attendance;
+          const data = response.data.attendance || {};
           if (Object.keys(data).length === 0) {
             setError('No attendance records found for you yet.');
           } else {
@@ -91,7 +102,7 @@ const StudentDashboard: React.FC = () => {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.data.success) {
-          setLeaveRequests(response.data.leave_requests);
+          setLeaveRequests(response.data.leave_requests || []);
         } else {
           setError(response.data.message || 'Failed to fetch leave requests');
         }
@@ -111,6 +122,12 @@ const StudentDashboard: React.FC = () => {
 
   const handleSubmitLeaveRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token) {
+      setError('Session expired. Please log in again.');
+      logout();
+      navigate('/login');
+      return;
+    }
     setLoading(true);
     setError('');
     setSuccess('');
@@ -122,16 +139,19 @@ const StudentDashboard: React.FC = () => {
       );
       if (response.data.success) {
         setSuccess('Leave request submitted successfully!');
-        setLeaveRequests([...leaveRequests, {
-          id: response.data.leave_id,
-          start_date: startDate,
-          end_date: endDate,
-          reason,
-          status: 'PENDING',
-          submitted_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
-          reviewed_at: null,
-          reviewed_by: null,
-        }]);
+        setLeaveRequests([
+          ...leaveRequests,
+          {
+            id: response.data.leave_id,
+            start_date: startDate,
+            end_date: endDate,
+            reason,
+            status: 'PENDING',
+            submitted_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+            reviewed_at: null,
+            reviewed_by: null,
+          },
+        ]);
         setStartDate('');
         setEndDate('');
         setReason('');
@@ -157,7 +177,7 @@ const StudentDashboard: React.FC = () => {
       new Set(
         Object.values(attendanceData)
           .flat()
-          .map((entry: any) => entry.date)
+          .map((entry) => entry.date)
       )
     ).sort();
 
@@ -167,7 +187,7 @@ const StudentDashboard: React.FC = () => {
       return {
         label: subject,
         data: labels.map((date) => {
-          const entry = attendanceData[subject].find((e: any) => e.date === date);
+          const entry = attendanceData[subject].find((e) => e.date === date);
           return entry ? (entry.status === 'Present' ? 1 : 0) : null;
         }),
         borderColor: color,
@@ -186,19 +206,6 @@ const StudentDashboard: React.FC = () => {
 
   const chartOptions = {
     responsive: true,
-    animation: {
-      duration: 2000,
-      easing: 'easeInOutQuart',
-      onProgress: (animation: any) => {
-        const chart = animation.chart;
-        chart.data.datasets.forEach((dataset: any) => {
-          dataset.data = dataset.data.map((value: number | null) =>
-            value !== null ? value * (animation.currentStep / animation.numSteps) : null
-          );
-        });
-        chart.update();
-      },
-    },
     plugins: {
       legend: { position: 'top' as const, labels: { font: { size: 14, family: 'Poppins' }, color: '#1F2937' } },
       title: { display: true, text: 'Your Attendance Journey', font: { size: 24, family: 'Poppins', weight: 'bold' }, color: '#1F2937' },
@@ -306,7 +313,7 @@ const StudentDashboard: React.FC = () => {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            Loading your awesome data...
+            Loading your data...
           </motion.p>
         ) : (
           <>
@@ -461,11 +468,17 @@ const StudentDashboard: React.FC = () => {
                         >
                           <p><strong>Dates:</strong> {lr.start_date} to {lr.end_date}</p>
                           <p><strong>Reason:</strong> {lr.reason}</p>
-                          <p><strong>Status:</strong> 
-                            <span className={
-                              lr.status === 'APPROVED' ? 'text-green-600' :
-                              lr.status === 'REJECTED' ? 'text-red-600' : 'text-yellow-600'
-                            }>
+                          <p>
+                            <strong>Status:</strong>{' '}
+                            <span
+                              className={
+                                lr.status === 'APPROVED'
+                                  ? 'text-green-600'
+                                  : lr.status === 'REJECTED'
+                                  ? 'text-red-600'
+                                  : 'text-yellow-600'
+                              }
+                            >
                               {lr.status}
                             </span>
                           </p>

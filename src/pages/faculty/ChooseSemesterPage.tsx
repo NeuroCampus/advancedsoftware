@@ -1,3 +1,4 @@
+// src/pages/faculty/ChooseSemesterPage.tsx
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
@@ -67,8 +68,10 @@ const ChooseSemesterPage: React.FC = () => {
                 className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
                 required
               >
-                {semesters.map(sem => (
-                  <option key={sem} value={sem}>Semester {sem}</option>
+                {semesters.map((sem) => (
+                  <option key={sem} value={sem}>
+                    Semester {sem}
+                  </option>
                 ))}
               </select>
             </motion.div>
@@ -83,8 +86,10 @@ const ChooseSemesterPage: React.FC = () => {
                 className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
                 required
               >
-                {sections.map(sec => (
-                  <option key={sec} value={sec}>Section {sec}</option>
+                {sections.map((sec) => (
+                  <option key={sec} value={sec}>
+                    Section {sec}
+                  </option>
                 ))}
               </select>
             </motion.div>

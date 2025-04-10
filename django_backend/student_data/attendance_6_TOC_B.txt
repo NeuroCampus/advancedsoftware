@@ -17,3 +17,8 @@ Absent Students: Vaibhav Jain, Sidharth, Sahil Kumar, Umme kulsum Ansari, Tejash
 Faculty: 
 Present Students: Ritesh N, Pannaga
 Absent Students: Vaibhav Jain, Sidharth, Sahil Kumar, Umme kulsum Ansari, Tejashwini I M, Priyadharshini D, Shreyas Ranjankumar Sarapali, Varshini B S
+
+--- Attendance Session: 2025-04-01 09:10:05 ---
+Faculty: 
+Present Students: Pannaga, Ritesh N
+Absent Students: Vaibhav Jain, Sidharth, Sahil Kumar, Umme kulsum Ansari, Tejashwini I M, Priyadharshini D, Shreyas Ranjankumar Sarapali, Varshini B S

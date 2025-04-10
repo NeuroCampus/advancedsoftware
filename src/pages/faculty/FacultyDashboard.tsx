@@ -1,10 +1,32 @@
+// src/pages/faculty/FacultyDashboard.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUser } from '../../contexts/UserContext'; // Adjust path if needed
+import { useUser } from '../../contexts/UserContext';
 import { Calendar, LogOut, FileText } from 'lucide-react';
 import { motion } from 'framer-motion';
-import Header from '../../components/Header'; // Adjust path if needed
+import Header from '../../components/Header';
 import axios from 'axios';
+
+interface LeaveRequest {
+  id: number;
+  start_date: string;
+  end_date: string;
+  reason: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  submitted_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+}
+
+interface StudentLeaveRequest {
+  id: number;
+  student: string;
+  student_name?: string;
+  start_date: string;
+  end_date: string;
+  reason: string;
+  submitted_at: string;
+}
 
 const FacultyDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -13,8 +35,8 @@ const FacultyDashboard: React.FC = () => {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [reason, setReason] = useState<string>('');
-  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
-  const [studentLeaveRequests, setStudentLeaveRequests] = useState<any[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [studentLeaveRequests, setStudentLeaveRequests] = useState<StudentLeaveRequest[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
@@ -26,7 +48,6 @@ const FacultyDashboard: React.FC = () => {
     return null;
   }
 
-  // Fetch faculty leave requests on mount
   useEffect(() => {
     const fetchLeaveRequests = async () => {
       setLoading(true);
@@ -36,7 +57,7 @@ const FacultyDashboard: React.FC = () => {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.data.success) {
-          setLeaveRequests(response.data.leave_requests);
+          setLeaveRequests(response.data.leave_requests || []);
         } else {
           setError(response.data.message || 'Failed to fetch leave requests');
         }
@@ -51,7 +72,6 @@ const FacultyDashboard: React.FC = () => {
     fetchLeaveRequests();
   }, [token, logout]);
 
-  // Fetch student leave requests on mount
   useEffect(() => {
     const fetchStudentLeaveRequests = async () => {
       setLoading(true);
@@ -61,7 +81,7 @@ const FacultyDashboard: React.FC = () => {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.data.success) {
-          setStudentLeaveRequests(response.data.leave_requests);
+          setStudentLeaveRequests(response.data.leave_requests || []);
         } else {
           setError(response.data.message || 'Failed to fetch student leave requests');
         }
@@ -76,9 +96,14 @@ const FacultyDashboard: React.FC = () => {
     fetchStudentLeaveRequests();
   }, [token, logout]);
 
-  // Handle faculty leave request submission
   const handleSubmitLeaveRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token) {
+      setError('Session expired. Please log in again.');
+      logout();
+      navigate('/login');
+      return;
+    }
     setLoading(true);
     setError('');
     setSuccess('');
@@ -90,16 +115,19 @@ const FacultyDashboard: React.FC = () => {
       );
       if (response.data.success) {
         setSuccess('Leave request submitted successfully!');
-        setLeaveRequests([...leaveRequests, {
-          id: response.data.leave_id,
-          start_date: startDate,
-          end_date: endDate,
-          reason,
-          status: 'PENDING',
-          submitted_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
-          reviewed_at: null,
-          reviewed_by: null,
-        }]);
+        setLeaveRequests([
+          ...leaveRequests,
+          {
+            id: response.data.leave_id,
+            start_date: startDate,
+            end_date: endDate,
+            reason,
+            status: 'PENDING',
+            submitted_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+            reviewed_at: null,
+            reviewed_by: null,
+          },
+        ]);
         setStartDate('');
         setEndDate('');
         setReason('');
@@ -115,8 +143,7 @@ const FacultyDashboard: React.FC = () => {
     }
   };
 
-  // Handle student leave request management (approve/reject)
-  const handleManageStudentLeave = async (leaveId: string, action: 'APPROVE' | 'REJECT') => {
+  const handleManageStudentLeave = async (leaveId: number, action: 'APPROVE' | 'REJECT') => {
     setLoading(true);
     setError('');
     setSuccess('');
@@ -128,7 +155,7 @@ const FacultyDashboard: React.FC = () => {
       );
       if (response.data.success) {
         setSuccess(`Student leave request ${action.toLowerCase()}d successfully!`);
-        setStudentLeaveRequests(studentLeaveRequests.filter(lr => lr.id !== leaveId));
+        setStudentLeaveRequests(studentLeaveRequests.filter((lr) => lr.id !== leaveId));
         setTimeout(() => setSuccess(''), 4000);
       } else {
         setError(response.data.message || `Failed to ${action.toLowerCase()} student leave request`);
@@ -156,7 +183,10 @@ const FacultyDashboard: React.FC = () => {
               Faculty Dashboard
             </h1>
             <motion.button
-              onClick={logout}
+              onClick={() => {
+                logout();
+                navigate('/login');
+              }}
               className="flex items-center bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded transition-colors"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
@@ -167,7 +197,6 @@ const FacultyDashboard: React.FC = () => {
           </div>
           <p className="text-lg text-gray-600 mb-6">Welcome, Faculty! Manage attendance and leave requests here.</p>
 
-          {/* Take Attendance Button */}
           <motion.button
             onClick={() => navigate('/choose-semester')}
             className="flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-full transition-colors shadow-md w-full max-w-xs mx-auto mb-4"
@@ -178,7 +207,6 @@ const FacultyDashboard: React.FC = () => {
             Take Attendance Now
           </motion.button>
 
-          {/* Faculty Leave Request Button */}
           <motion.button
             onClick={() => setShowLeaveSection(!showLeaveSection)}
             className="flex items-center justify-center bg-green-600 hover:bg-green-700 text-white font-medium py-3 px-6 rounded-full transition-colors shadow-md w-full max-w-xs mx-auto mb-4"
@@ -189,7 +217,6 @@ const FacultyDashboard: React.FC = () => {
             {showLeaveSection ? 'Hide Leave Requests' : 'Manage Leave Requests'}
           </motion.button>
 
-          {/* Student Leave Request Button with Count */}
           <div className="relative w-full max-w-xs mx-auto mb-8">
             <motion.button
               onClick={() => setShowStudentLeaveSection(!showStudentLeaveSection)}
@@ -212,7 +239,6 @@ const FacultyDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Success/Error Messages */}
           {success && (
             <motion.div
               className="mb-6 p-4 bg-green-100 text-green-700 rounded-lg"
@@ -246,17 +272,17 @@ const FacultyDashboard: React.FC = () => {
             </motion.p>
           ) : (
             <>
-              {/* Faculty Leave Section */}
               {showLeaveSection && (
                 <>
-                  {/* Faculty Leave Request Form */}
                   <motion.div
                     className="mb-8"
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5 }}
                   >
-                    <h2 className="text-2xl font-bold text-gray-800 mb-4">Submit Leave Request</h2>
+                    <h2 className="text-2xl font-bold text-gray-800 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+                      Submit Leave Request
+                    </h2>
                     <form onSubmit={handleSubmitLeaveRequest} className="space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
@@ -303,7 +329,6 @@ const FacultyDashboard: React.FC = () => {
                     </form>
                   </motion.div>
 
-                  {/* Faculty Leave Requests List */}
                   {leaveRequests.length > 0 && (
                     <motion.div
                       className="mt-8"
@@ -311,7 +336,9 @@ const FacultyDashboard: React.FC = () => {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.5, delay: 0.2 }}
                     >
-                      <h2 className="text-2xl font-bold text-gray-800 mb-4">Your Leave Requests</h2>
+                      <h2 className="text-2xl font-bold text-gray-800 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+                        Your Leave Requests
+                      </h2>
                       <ul className="space-y-4">
                         {leaveRequests.map((lr) => (
                           <motion.li
@@ -323,11 +350,17 @@ const FacultyDashboard: React.FC = () => {
                           >
                             <p><strong>Dates:</strong> {lr.start_date} to {lr.end_date}</p>
                             <p><strong>Reason:</strong> {lr.reason}</p>
-                            <p><strong>Status:</strong> 
-                              <span className={
-                                lr.status === 'APPROVED' ? 'text-green-600' :
-                                lr.status === 'REJECTED' ? 'text-red-600' : 'text-yellow-600'
-                              }>
+                            <p>
+                              <strong>Status:</strong>{' '}
+                              <span
+                                className={
+                                  lr.status === 'APPROVED'
+                                    ? 'text-green-600'
+                                    : lr.status === 'REJECTED'
+                                    ? 'text-red-600'
+                                    : 'text-yellow-600'
+                                }
+                              >
                                 {lr.status}
                               </span>
                             </p>
@@ -346,7 +379,6 @@ const FacultyDashboard: React.FC = () => {
                 </>
               )}
 
-              {/* Student Leave Section */}
               {showStudentLeaveSection && (
                 <motion.div
                   className="mt-8"
@@ -354,7 +386,9 @@ const FacultyDashboard: React.FC = () => {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.4 }}
                 >
-                  <h2 className="text-2xl font-bold text-gray-800 mb-4">Student Leave Requests (Pending)</h2>
+                  <h2 className="text-2xl font-bold text-gray-800 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+                    Student Leave Requests (Pending)
+                  </h2>
                   {studentLeaveRequests.length > 0 ? (
                     <ul className="space-y-4">
                       {studentLeaveRequests.map((lr) => (
