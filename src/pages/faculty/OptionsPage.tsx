@@ -1,3 +1,4 @@
+// src/pages/faculty/OptionsPage.tsx
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
@@ -27,7 +28,7 @@ const OptionsPage: React.FC = () => {
             <h2 className="text-3xl font-extrabold text-gray-800 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
               Class Information
             </h2>
-            <div className="grid grid-cols-3 gap-4 text-center">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
               <div className="bg-blue-50 p-4 rounded-lg">
                 <p className="text-sm text-gray-600">Semester</p>
                 <p className="text-xl font-semibold">{semester || 'Not set'}</p>
@@ -45,14 +46,16 @@ const OptionsPage: React.FC = () => {
           <h2 className="text-3xl font-extrabold text-gray-800 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
             What would you like to do?
           </h2>
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Link to="/enroll">
               <motion.div
                 className="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-shadow text-center h-full flex flex-col"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <div className="flex justify-center mb-4"><UserPlus size={48} className="text-blue-600" /></div>
+                <div className="flex justify-center mb-4">
+                  <UserPlus size={48} className="text-blue-600" />
+                </div>
                 <h3 className="text-xl font-semibold mb-2">Enroll Students</h3>
                 <p className="text-gray-600 flex-grow">Add new students to the system with facial recognition</p>
                 <button className="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors w-full">
@@ -66,7 +69,9 @@ const OptionsPage: React.FC = () => {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <div className="flex justify-center mb-4"><UserCheck size={48} className="text-blue-600" /></div>
+                <div className="flex justify-center mb-4">
+                  <UserCheck size={48} className="text-blue-600" />
+                </div>
                 <h3 className="text-xl font-semibold mb-2">Take Attendance</h3>
                 <p className="text-gray-600 flex-grow">Capture attendance using facial recognition</p>
                 <button className="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors w-full">
@@ -80,9 +85,11 @@ const OptionsPage: React.FC = () => {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <div className="flex justify-center mb-4"><BarChart size={48} className="text-blue-600" /></div>
-                <h3 className="text-xl font-semibold mb-2">View Statistics</h3>
-                <p className="text-gray-600 flex-grow">Generate and view attendance reports and statistics</p>
+                <div className="flex justify-center mb-4">
+                  <BarChart size={48} className="text-blue-600" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2">Attendance Statistics</h3>
+                <p className="text-gray-600 flex-grow">View and analyze attendance data</p>
                 <button className="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition-colors w-full">
                   View Statistics
                 </button>

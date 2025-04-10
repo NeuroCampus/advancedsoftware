@@ -1,20 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
-import { Camera, Upload, Check, X, FileText } from 'lucide-react';
+import { Camera, Upload, Check, X, FileText, ArrowLeft } from 'lucide-react';
 import Webcam from 'react-webcam';
 import axios from 'axios';
 import Header from '../../components/Header';
-import { ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-// Define TypeScript interface for bulkMessage
 interface BulkMessage {
   text: string;
   type: '' | 'success' | 'error';
   details: {
     enrolled?: { name: string; usn: string }[];
-    updated?: { name: string; usn: string }[];  // Added for updated students
+    updated?: { name: string; usn: string }[];
     warnings?: string[];
   } | null;
 }
@@ -39,26 +37,26 @@ const EnrollPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch existing students for the current semester and section
   useEffect(() => {
     const fetchStudents = async () => {
       if (!token || !semester || !section) return;
       try {
         const response = await axios.get('http://localhost:8000/api/faculty/students/', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}` },
           params: { semester, section },
         });
         if (response.data.success) {
-          setExistingStudents(response.data.students);
+          setExistingStudents(response.data.students || []);
+        } else {
+          console.error('Failed to fetch students:', response.data.message);
         }
       } catch (err) {
-        console.error('Failed to fetch students:', err);
+        console.error('Error fetching students:', err);
       }
     };
     fetchStudents();
   }, [token, semester, section]);
 
-  // Clear messages after 4 seconds
   useEffect(() => {
     if (message.text) {
       const timer = setTimeout(() => setMessage({ text: '', type: '' }), 4000);
@@ -79,8 +77,8 @@ const EnrollPage: React.FC = () => {
       if (imageSrc) {
         setCapturedImages([...capturedImages, imageSrc]);
         fetch(imageSrc)
-          .then(res => res.blob())
-          .then(blob => {
+          .then((res) => res.blob())
+          .then((blob) => {
             const file = new File([blob], `webcam-${Date.now()}.jpg`, { type: 'image/jpeg' });
             setPhotos([...photos, file]);
           });
@@ -92,9 +90,9 @@ const EnrollPage: React.FC = () => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
       setPhotos([...photos, ...newFiles]);
-      newFiles.forEach(file => {
+      newFiles.forEach((file) => {
         const reader = new FileReader();
-        reader.onloadend = () => setCapturedImages(prev => [...prev, reader.result as string]);
+        reader.onloadend = () => setCapturedImages((prev) => [...prev, reader.result as string]);
         reader.readAsDataURL(file);
       });
     }
@@ -108,7 +106,7 @@ const EnrollPage: React.FC = () => {
   const handleUsnChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedUsn = e.target.value;
     setUsn(selectedUsn);
-    const student = existingStudents.find(s => s.usn === selectedUsn);
+    const student = existingStudents.find((s) => s.usn === selectedUsn);
     if (student) {
       setName(student.name);
       setEmail(student.email);
@@ -148,21 +146,40 @@ const EnrollPage: React.FC = () => {
     if (email) formData.append('email', email);
     if (semester) formData.append('semester', semester);
     if (section) formData.append('section', section);
-    photos.forEach(photo => formData.append('photos', photo));
+    photos.forEach((photo) => formData.append('photos', photo));
 
     try {
       const response = await axios.post('http://localhost:8000/api/faculty/enroll/', formData, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
       });
-      setMessage({ text: response.data.message, type: 'success' });
-      setName('');
-      setUsn('');
-      setEmail('');
-      setPhotos([]);
-      setCapturedImages([]);
-      setShowCamera(false);
+      if (response.data.success) {
+        setMessage({ text: response.data.message || 'Student processed successfully!', type: 'success' });
+        setName('');
+        setUsn('');
+        setEmail('');
+        setPhotos([]);
+        setCapturedImages([]);
+        setShowCamera(false);
+        setExistingStudents((prev) =>
+          prev.some((s) => s.usn === usn)
+            ? prev.map((s) => (s.usn === usn ? { usn, name, email } : s))
+            : [...prev, { usn, name, email }]
+        );
+      } else {
+        setMessage({ text: response.data.message || 'Failed to process student', type: 'error' });
+      }
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.message || 'Operation failed', type: 'error' });
+      setMessage({
+        text: err.response?.data?.message || 'Operation failed',
+        type: 'error',
+      });
+      if (err.response?.status === 401) {
+        logout();
+        navigate('/login');
+      }
     } finally {
       setLoading(false);
     }
@@ -196,28 +213,53 @@ const EnrollPage: React.FC = () => {
 
     const formData = new FormData();
     formData.append('excel_file', bulkFile);
+    if (semester) formData.append('semester', semester);
+    if (section) formData.append('section', section);
 
     try {
       const response = await axios.post('http://localhost:8000/api/faculty/bulk-enroll/', formData, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      setBulkMessage({
-        text: response.data.message,
-        type: 'success',
-        details: {
-          enrolled: response.data.enrolled_students,
-          updated: response.data.updated_students,  // Added for updated students
-          warnings: response.data.warnings || [],
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
         },
       });
-      setBulkFile(null);
-      if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+      if (response.data.success) {
+        setBulkMessage({
+          text: response.data.message || 'Bulk enrollment completed successfully!',
+          type: 'success',
+          details: {
+            enrolled: response.data.enrolled_students || [],
+            updated: response.data.updated_students || [],
+            warnings: response.data.warnings || [],
+          },
+        });
+        setBulkFile(null);
+        if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+        // Refresh existing students
+        const studentsResponse = await axios.get('http://localhost:8000/api/faculty/students/', {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { semester, section },
+        });
+        if (studentsResponse.data.success) {
+          setExistingStudents(studentsResponse.data.students || []);
+        }
+      } else {
+        setBulkMessage({
+          text: response.data.message || 'Bulk enrollment failed',
+          type: 'error',
+          details: response.data.warnings ? { warnings: response.data.warnings } : null,
+        });
+      }
     } catch (err: any) {
       setBulkMessage({
         text: err.response?.data?.message || 'Bulk enrollment failed',
         type: 'error',
         details: err.response?.data?.warnings ? { warnings: err.response.data.warnings } : null,
       });
+      if (err.response?.status === 401) {
+        logout();
+        navigate('/login');
+      }
     } finally {
       setBulkLoading(false);
     }
@@ -233,11 +275,20 @@ const EnrollPage: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: 'easeOut' }}
         >
-          <h2 className="text-4xl font-extrabold text-gray-800 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
-            Enroll/Update Student
-          </h2>
+          <div className="flex items-center mb-6">
+            <motion.button
+              onClick={() => navigate('/options')}
+              className="text-gray-600 hover:text-gray-800 mr-4"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <ArrowLeft size={24} />
+            </motion.button>
+            <h2 className="text-4xl font-extrabold text-gray-800 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-600">
+              Enroll/Update Student
+            </h2>
+          </div>
 
-          {/* Single Enrollment Section */}
           {message.text && (
             <motion.div
               className={`mb-6 p-4 rounded-lg ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
@@ -248,10 +299,18 @@ const EnrollPage: React.FC = () => {
               {message.text}
             </motion.div>
           )}
+
           <form onSubmit={handleSubmit}>
-            <motion.div className="grid md:grid-cols-2 gap-4 mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.2 }}>
+            <motion.div
+              className="grid md:grid-cols-2 gap-4 mb-6"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+            >
               <div>
-                <label htmlFor="usn" className="block text-gray-700 font-medium mb-2">Select Student USN</label>
+                <label htmlFor="usn" className="block text-gray-700 font-medium mb-2">
+                  Select Student USN
+                </label>
                 <select
                   id="usn"
                   value={usn}
@@ -259,8 +318,10 @@ const EnrollPage: React.FC = () => {
                   className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
                 >
                   <option value="">-- Select or enter new USN --</option>
-                  {existingStudents.map(student => (
-                    <option key={student.usn} value={student.usn}>{student.usn} - {student.name}</option>
+                  {existingStudents.map((student) => (
+                    <option key={student.usn} value={student.usn}>
+                      {student.usn} - {student.name}
+                    </option>
                   ))}
                 </select>
                 <input
@@ -272,7 +333,9 @@ const EnrollPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label htmlFor="name" className="block text-gray-700 font-medium mb-2">Full Name</label>
+                <label htmlFor="name" className="block text-gray-700 font-medium mb-2">
+                  Full Name
+                </label>
                 <input
                   type="text"
                   id="name"
@@ -283,7 +346,9 @@ const EnrollPage: React.FC = () => {
                 />
               </div>
               <div className="md:col-span-2">
-                <label htmlFor="email" className="block text-gray-700 font-medium mb-2">Email</label>
+                <label htmlFor="email" className="block text-gray-700 font-medium mb-2">
+                  Email
+                </label>
                 <input
                   type="email"
                   id="email"
@@ -294,8 +359,15 @@ const EnrollPage: React.FC = () => {
                 />
               </div>
             </motion.div>
-            <motion.div className="mb-6" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.4 }}>
-              <label className="block text-gray-700 font-medium mb-2">Student Photos (for Face Recognition)</label>
+            <motion.div
+              className="mb-6"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.4 }}
+            >
+              <label className="block text-gray-700 font-medium mb-2">
+                Student Photos (for Face Recognition)
+              </label>
               <div className="flex flex-wrap gap-4 mb-4">
                 {capturedImages.map((img, index) => (
                   <motion.div
@@ -305,7 +377,11 @@ const EnrollPage: React.FC = () => {
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ duration: 0.3 }}
                   >
-                    <img src={img} alt={`Student ${index + 1}`} className="w-24 h-24 object-cover rounded border border-gray-300" />
+                    <img
+                      src={img}
+                      alt={`Student ${index + 1}`}
+                      className="w-24 h-24 object-cover rounded border border-gray-300"
+                    />
                     <button
                       type="button"
                       onClick={() => removePhoto(index)}
@@ -370,10 +446,15 @@ const EnrollPage: React.FC = () => {
                 </motion.div>
               )}
             </motion.div>
-            <motion.div className="flex justify-between gap-4 mb-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5, delay: 0.6 }}>
+            <motion.div
+              className="flex justify-between gap-4 mb-6"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, delay: 0.6 }}
+            >
               <motion.button
                 type="button"
-                onClick={() => navigate(-1)}
+                onClick={() => navigate('/options')}
                 className="flex items-center bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded transition-colors"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -392,16 +473,22 @@ const EnrollPage: React.FC = () => {
               <motion.button
                 type="submit"
                 disabled={loading}
-                className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded transition-colors ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded transition-colors ${
+                  loading ? 'opacity-70 cursor-not-allowed' : ''
+                }`}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                {loading ? 'Processing...' : <><Check size={18} className="mr-2" /> {usn && existingStudents.some(s => s.usn === usn) ? 'Update Student' : 'Enroll Student'}</>}
+                {loading ? 'Processing...' : (
+                  <>
+                    <Check size={18} className="mr-2" />{' '}
+                    {usn && existingStudents.some((s) => s.usn === usn) ? 'Update Student' : 'Enroll Student'}
+                  </>
+                )}
               </motion.button>
             </motion.div>
           </form>
 
-          {/* Bulk Enrollment Section */}
           {showBulkEnroll && (
             <motion.div
               className="mt-6 p-6 bg-blue-50 rounded-lg border border-blue-200"
@@ -413,7 +500,9 @@ const EnrollPage: React.FC = () => {
               <h3 className="text-2xl font-bold text-blue-700 mb-4">Bulk Enroll Students</h3>
               {bulkMessage.text && (
                 <motion.div
-                  className={`mb-6 p-4 rounded-lg ${bulkMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
+                  className={`mb-6 p-4 rounded-lg ${
+                    bulkMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                  }`}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.5 }}
@@ -426,7 +515,9 @@ const EnrollPage: React.FC = () => {
                           <strong>Newly Enrolled Students:</strong>
                           <ul className="list-disc ml-6">
                             {bulkMessage.details.enrolled.map((student, index) => (
-                              <li key={index}>{student.name} ({student.usn})</li>
+                              <li key={index}>
+                                {student.name} ({student.usn})
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -436,7 +527,9 @@ const EnrollPage: React.FC = () => {
                           <strong>Updated Students:</strong>
                           <ul className="list-disc ml-6">
                             {bulkMessage.details.updated.map((student, index) => (
-                              <li key={index}>{student.name} ({student.usn})</li>
+                              <li key={index}>
+                                {student.name} ({student.usn})
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -459,17 +552,27 @@ const EnrollPage: React.FC = () => {
                 <h4 className="font-semibold mb-2">Excel File Requirements:</h4>
                 <p>The Excel file must contain the following columns in this order:</p>
                 <ul className="list-disc ml-6">
-                  <li><strong>NAME</strong>: Full name of the student</li>
-                  <li><strong>USN</strong>: Unique student number</li>
-                  <li><strong>SEMESTER</strong>: Semester (e.g., 4, 5)</li>
-                  <li><strong>SECTION</strong>: Section (e.g., A, B)</li>
-                  <li><strong>MAIL ID</strong>: Student email address</li>
+                  <li>
+                    <strong>NAME</strong>: Full name of the student
+                  </li>
+                  <li>
+                    <strong>USN</strong>: Unique student number
+                  </li>
+                  <li>
+                    <strong>SEMESTER</strong>: Semester (e.g., 4, 5)
+                  </li>
+                  <li>
+                    <strong>SECTION</strong>: Section (e.g., A, B)
+                  </li>
+                  <li>
+                    <strong>MAIL ID</strong>: Student email address
+                  </li>
                 </ul>
                 <p className="mt-2">Example Format:</p>
                 <pre className="bg-gray-200 p-2 rounded mt-1 text-sm">
                   NAME       | USN        | SEMESTER | SECTION | MAIL ID {"\n"}
                   Priya S    | 1AM22CI080 | 4        | B       | priya@example.com {"\n"}
-                  Amit K     | 1AM22CI081 | 5        | A       | amit@example.com {"\n"}
+                  Amit K     | 1AM22CI081 | 5        | A       | amit@example.com
                 </pre>
               </div>
               <form onSubmit={handleBulkEnrollSubmit}>
@@ -484,11 +587,17 @@ const EnrollPage: React.FC = () => {
                   <motion.button
                     type="submit"
                     disabled={bulkLoading}
-                    className={`flex items-center bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded transition-colors ${bulkLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    className={`flex items-center bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded transition-colors ${
+                      bulkLoading ? 'opacity-70 cursor-not-allowed' : ''
+                    }`}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                   >
-                    {bulkLoading ? 'Processing...' : <><Upload size={18} className="mr-2" /> Upload and Enroll</>}
+                    {bulkLoading ? 'Processing...' : (
+                      <>
+                        <Upload size={18} className="mr-2" /> Upload and Enroll
+                      </>
+                    )}
                   </motion.button>
                 </div>
               </form>

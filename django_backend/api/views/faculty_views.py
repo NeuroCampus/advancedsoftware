@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from django.http import FileResponse
 from ..permissions import IsTeacher, IsTeacherOrHOD
 from .utils import face_detector, shape_predictor, face_recognizer, load_all_students, is_same_person, get_google_sheet_id, update_attendance_in_sheet, parse_attendance, calculate_statistics, generate_pdf
-from ..models import AttendanceRecord, AttendanceDetail, Student, User, LeaveRequest, StudentLeaveRequest
+from ..models import AttendanceRecord, AttendanceDetail, Student, User, LeaveRequest, StudentLeaveRequest, FacultyAssignment
 import os
 import cv2
 import numpy as np
@@ -23,71 +23,62 @@ logger = logging.getLogger(__name__)
 def take_attendance(request) -> Response:
     logger.info("Received take_attendance request")
     if face_detector is None or shape_predictor is None or face_recognizer is None:
-        logger.error("Face recognition models not loaded")
         return Response({'success': False, 'message': 'Face recognition models not loaded'}, status=500)
     
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
     if not token:
-        logger.error("Authentication token missing")
         return Response({'success': False, 'message': 'Authentication token required'}, status=401)
     
+    branch_id = request.data.get('branch')
     subject = request.data.get('subject')
     section = request.data.get('section')
     semester = request.data.get('semester')
     files = request.FILES.getlist('class_images')
-    if not all([subject, section, semester, files]):
-        logger.error("Missing required fields: subject=%s, section=%s, semester=%s, files=%s", subject, section, semester, len(files))
+    if not all([branch_id, subject, section, semester, files]):
         return Response({'success': False, 'message': 'Missing required fields'}, status=400)
     
-    # Get the faculty member from the authenticated user
-    faculty = request.user  # Assuming the user is a Faculty model instance or has a name attribute
-    faculty_name = faculty.get_full_name() if hasattr(faculty, 'get_full_name') else faculty.username
+    try:
+        branch = Branch.objects.get(id=branch_id)
+    except Branch.DoesNotExist:
+        return Response({'success': False, 'message': 'Branch not found'}, status=404)
+    
+    faculty = request.user
+    faculty_name = faculty.get_full_name() or faculty.username
 
     try:
-        logger.info("Fetching Google Sheet ID for %s_%s_%s", semester, subject, section)
         sheet_id = get_google_sheet_id(subject, section, semester)
-        if not sheet_id:
-            logger.warning("Failed to get Google Sheet ID; proceeding without sheet")
     except Exception as e:
-        logger.warning("Exception while fetching Google Sheet ID: %s; proceeding without sheet", str(e))
+        logger.warning("Exception while fetching Google Sheet ID: %s", str(e))
         sheet_id = None
     
     try:
-        # Store faculty with the attendance record
         attendance_record = AttendanceRecord.objects.create(
+            branch=branch,
             semester=semester,
             section=section,
             subject=subject,
             sheet_id=sheet_id,
-            faculty=request.user,
+            faculty=faculty,
             status='completed'
         )
-        logger.info("Created AttendanceRecord with ID: %s by %s", attendance_record.id, faculty_name)
     except Exception as e:
-        logger.error("Error creating attendance record: %s", str(e))
         return Response({'success': False, 'message': f'Error creating attendance record: {str(e)}'}, status=500)
     
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    attendance_file = f"attendance_{semester}_{subject}_{section}.txt"
+    attendance_file = f"attendance_{branch.name}_{semester}_{subject}_{section}.txt"
     file_path = os.path.join(settings.STUDENT_DATA_PATH, attendance_file)
     attendance_record.file_path = file_path
     attendance_record.save()
     
     present_students = set()
-    db_students = Student.objects.filter(semester=semester, section=section)
+    db_students = Student.objects.filter(branch=branch, semester=semester, section=section)
     class_students = [{'name': s.name, 'usn': s.usn, 'semester': s.semester, 'section': s.section, 'encodings': []} for s in db_students]
-    logger.info("Loaded %d students from database for semester %s, section %s", len(class_students), semester, section)
     
     enrolled_students = load_all_students()
     for student in class_students:
         pickle_student = next((s for s in enrolled_students if s['usn'] == student['usn']), None)
         if pickle_student and pickle_student['encodings']:
             student['encodings'] = pickle_student['encodings']
-            logger.debug("Added encodings for student %s from pickle", student['usn'])
-    
-    if not class_students:
-        logger.warning("No students found for semester %s, section %s", semester, section)
-        return Response({'success': False, 'message': 'No students enrolled in this class'}, status=400)
     
     for file in files:
         try:
@@ -95,43 +86,35 @@ def take_attendance(request) -> Response:
             nparr = np.frombuffer(img_bytes, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if img is None or img.size == 0:
-                logger.error("Invalid image file: %s", file.name)
                 return Response({'success': False, 'message': 'Invalid image file'}, status=400)
             rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             faces = face_detector(rgb_img)
-            logger.debug("Detected %d faces in image %s", len(faces), file.name)
             for face in faces:
                 shape = shape_predictor(rgb_img, face)
                 face_encoding = np.array(face_recognizer.compute_face_descriptor(rgb_img, shape))
                 for student in class_students:
                     if is_same_person(student['encodings'], face_encoding):
                         present_students.add((student['name'], student['usn']))
-                        logger.debug("Matched student: %s (%s)", student['name'], student['usn'])
                         break
         except Exception as e:
-            logger.error("Error processing class image %s: %s", file.name, str(e))
             return Response({'success': False, 'message': f'Error processing class image: {str(e)}'}, status=500)
     
     all_class_students = [(s['name'], s['usn']) for s in class_students]
     absent_students = [(name, usn) for name, usn in all_class_students if (name, usn) not in present_students]
-    logger.info("Present: %d students, Absent: %d students", len(present_students), len(absent_students))
     
     if sheet_id:
         try:
             update_attendance_in_sheet(sheet_id, list(present_students), absent_students, timestamp)
-            logger.info("Successfully updated Google Sheet: %s", sheet_id)
         except Exception as e:
-            logger.warning("Error updating Google Sheet: %s; continuing without sheet update", str(e))
+            logger.warning("Error updating Google Sheet: %s", str(e))
     
     try:
         with open(file_path, 'a') as report:
             report.write(f"\n--- Attendance Session: {timestamp} ---\n")
-            report.write(f"Faculty: {faculty_name}\n")  # Added faculty name to the file
+            report.write(f"Faculty: {faculty_name}\n")
             report.write("Present Students: " + ", ".join([name for name, _ in present_students]) + "\n")
             report.write("Absent Students: " + ", ".join([name for name, _ in absent_students]) + "\n")
-        logger.info("Wrote attendance to file: %s", file_path)
     except Exception as e:
-        logger.error("Error writing to attendance file: %s", str(e))
         return Response({'success': False, 'message': f'Error writing to attendance file: {str(e)}'}, status=500)
     
     try:
@@ -141,26 +124,18 @@ def take_attendance(request) -> Response:
         for name, usn in absent_students:
             student = Student.objects.get(usn=usn)
             AttendanceDetail.objects.create(record=attendance_record, student=student, status=False)
-        logger.info("Saved attendance details to database")
-    except Student.DoesNotExist:
-        logger.error("One or more students not found in database")
-        return Response({'success': False, 'message': 'One or more students not found in database'}, status=404)
     except Exception as e:
-        logger.error("Error saving attendance details: %s", str(e))
         return Response({'success': False, 'message': f'Error saving attendance details: {str(e)}'}, status=500)
     
     sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit?usp=sharing" if sheet_id else None
-    response_data = {
+    return Response({
         'success': True,
-        'message': f"Attendance taken for {semester} {subject} ({section})",
+        'message': f"Attendance taken for {branch.name}, {semester} {subject} ({section})",
         'present_students': [f"{name} ({usn})" for name, usn in present_students],
         'absent_students': [f"{name} ({usn})" for name, usn in absent_students],
-        'faculty_name': faculty_name,  # Added faculty name to response
-    }
-    if sheet_url:
-        response_data['sheet_url'] = sheet_url
-    logger.info("Attendance process completed successfully by %s", faculty_name)
-    return Response(response_data)
+        'faculty_name': faculty_name,
+        'sheet_url': sheet_url
+    })
 
 @api_view(['POST'])
 @permission_classes([IsTeacher])
@@ -168,96 +143,82 @@ def enroll(request) -> Response:
     logger.info("Received enroll request")
     name = request.data.get('name')
     usn = request.data.get('usn')
+    branch_id = request.data.get('branch')
     semester = request.data.get('semester')
     section = request.data.get('section')
     email = request.data.get('email')
+    proctor_id = request.data.get('proctor')
     photos = request.FILES.getlist('photos')
     photos_to_delete = request.data.get('photos_to_delete', [])
-    if not usn:
-        logger.error("Missing required field: usn")
-        return Response({'success': False, 'message': 'USN is required'}, status=400)
-    if not photos and not photos_to_delete:
-        logger.error("No photos provided and no deletions requested")
-        return Response({'success': False, 'message': 'At least one photo addition or deletion is required'}, status=400)
+    
+    if not all([usn, branch_id]):
+        return Response({'success': False, 'message': 'USN and branch are required'}, status=400)
+    
+    try:
+        branch = Branch.objects.get(id=branch_id)
+    except Branch.DoesNotExist:
+        return Response({'success': False, 'message': 'Branch not found'}, status=404)
+    
+    proctor = User.objects.get(id=proctor_id, role='teacher') if proctor_id else None
+    
     try:
         existing_student = Student.objects.filter(usn=usn).first()
         is_update = bool(existing_student)
         if existing_student:
             student = existing_student
-            logger.info("Updating existing student: %s (%s)", student.name, usn)
             if name and name != student.name:
                 student.name = name
-                student.save()
-                logger.info("Updated name for %s to %s", usn, name)
+            if branch != student.branch:
+                student.branch = branch
             if semester and semester != student.semester:
                 student.semester = semester
-                student.save()
-                logger.info("Updated semester for %s to %s", usn, semester)
             if section and section != student.section:
                 student.section = section
-                student.save()
-                logger.info("Updated section for %s to %s", usn, section)
+            if proctor and proctor != student.proctor:
+                student.proctor = proctor
             if email and email != student.user.email:
                 if User.objects.filter(email=email).exclude(id=student.user.id).exists():
-                    logger.warning("Email %s already in use by another user", email)
                     return Response({'success': False, 'message': 'Email already in use'}, status=400)
                 student.user.email = email
                 student.user.save()
-                logger.info("Updated email for %s to %s", usn, email)
+            student.save()
         else:
             if not all([name, semester, section, email]):
-                logger.error("Missing required fields for new student: name=%s, semester=%s, section=%s, email=%s", 
-                            name, semester, section, email)
-                return Response({'success': False, 'message': 'Name, semester, section, and email are required for new students'}, status=400)
+                return Response({'success': False, 'message': 'All fields required for new student'}, status=400)
             if User.objects.filter(email=email).exists():
-                logger.warning("User with email %s already exists", email)
                 return Response({'success': False, 'message': 'Email already in use'}, status=400)
-            default_password = "default123"
             user = User.objects.create(
                 username=usn,
                 email=email,
-                password=make_password(default_password),
+                password=make_password("default123"),
                 role='student'
             )
-            logger.info("Created User for %s with email %s", usn, email)
             student = Student.objects.create(
                 name=name,
                 usn=usn,
+                branch=branch,
                 semester=semester,
                 section=section,
-                user=user
+                user=user,
+                proctor=proctor
             )
-            logger.info("Created Student: %s (%s) linked to User", name, usn)
+        
         photo_dir = os.path.join(settings.STUDENT_DATA_PATH, usn)
-        try:
-            os.makedirs(photo_dir, exist_ok=True)
-        except PermissionError as e:
-            logger.error("Permission denied creating directory %s: %s", photo_dir, str(e))
-            return Response({'success': False, 'message': f'Permission denied creating directory for USN {usn}'}, status=500)
+        os.makedirs(photo_dir, exist_ok=True)
+        
         if photos_to_delete:
             for photo_filename in photos_to_delete:
                 photo_path = os.path.join(photo_dir, photo_filename)
-                try:
-                    if os.path.exists(photo_path):
-                        os.remove(photo_path)
-                        logger.info("Deleted photo %s for student %s", photo_path, usn)
-                    else:
-                        logger.warning("Photo %s not found for student %s", photo_path, usn)
-                except PermissionError as e:
-                    logger.error("Permission denied deleting photo %s: %s", photo_path, str(e))
-                    return Response({'success': False, 'message': f'Permission denied deleting photo for USN {usn}'}, status=500)
+                if os.path.exists(photo_path):
+                    os.remove(photo_path)
+        
         encodings = []
         if photos:
             for idx, photo in enumerate(photos):
                 photo_filename = f"photo_{idx}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
                 photo_path = os.path.join(photo_dir, photo_filename)
-                try:
-                    with open(photo_path, 'wb') as f:
-                        f.write(photo.read())
-                    logger.debug("Saved photo %s for student %s", photo_path, usn)
-                except PermissionError as e:
-                    logger.error("Permission denied saving photo %s: %s", photo_path, str(e))
-                    return Response({'success': False, 'message': f'Permission denied saving photo for USN {usn}'}, status=500)
+                with open(photo_path, 'wb') as f:
+                    f.write(photo.read())
                 photo.seek(0)
                 img_data = photo.read()
                 img = cv2.imdecode(np.frombuffer(img_data, np.uint8), cv2.IMREAD_COLOR)
@@ -268,107 +229,163 @@ def enroll(request) -> Response:
                         shape = shape_predictor(rgb_img, faces[0])
                         encoding = np.array(face_recognizer.compute_face_descriptor(rgb_img, shape))
                         encodings.append(encoding)
-                        logger.debug("Computed encoding for photo %s", photo_path)
-                    else:
-                        logger.warning("No faces detected in photo %s for student %s", photo_path, usn)
-                else:
-                    logger.error("Failed to decode image %s for student %s", photo_path, usn)
+        
         all_students = load_all_students()
         student_data = next((s for s in all_students if s['usn'] == usn), None)
-        if photos_to_delete:
-            remaining_photos = glob.glob(os.path.join(photo_dir, "*.jpg"))
-            encodings = []
-            for photo_path in remaining_photos:
-                img = cv2.imread(photo_path)
-                if img is not None:
-                    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    faces = face_detector(rgb_img)
-                    if faces:
-                        shape = shape_predictor(rgb_img, faces[0])
-                        encoding = np.array(face_recognizer.compute_face_descriptor(rgb_img, shape))
-                        encodings.append(encoding)
-                        logger.debug("Recomputed encoding for remaining photo %s", photo_path)
-                    else:
-                        logger.warning("No faces detected in remaining photo %s for student %s", photo_path, usn)
         if student_data:
             student_data['encodings'] = encodings
-            logger.info("Updated encodings for student %s with %d encodings", usn, len(encodings))
+            student_data.update({'name': student.name, 'semester': student.semester, 'section': student.section, 'branch': student.branch.name})
         else:
             student_data = {
                 'name': student.name,
                 'usn': usn,
+                'branch': student.branch.name,
                 'semester': student.semester,
                 'section': student.section,
                 'encodings': encodings
             }
-            logger.info("Created new student data for %s with %d encodings", usn, len(encodings))
-        updated_students = [s for s in all_students if s['usn'] != usn] + [student_data]
-        try:
-            with open(settings.PICKLE_FILE, 'wb') as f:
-                for s in updated_students:
-                    pickle.dump(s, f)
-        except PermissionError as e:
-            logger.error("Permission denied writing to pickle file %s: %s", settings.PICKLE_FILE, str(e))
-            return Response({'success': False, 'message': 'Permission denied updating student data'}, status=500)
-        message = f"Student {student.name} ({usn}) {'updated' if is_update else 'enrolled'} successfully."
-        if not is_update:
-            message += f" Default password is 'default123'."
-        logger.info(message)
+            all_students.append(student_data)
+        
+        with open(settings.PICKLE_FILE, 'wb') as f:
+            for s in all_students:
+                pickle.dump(s, f)
+        
         return Response({
             'success': True,
-            'message': message,
+            'message': f"Student {student.name} ({usn}) {'updated' if is_update else 'enrolled'} successfully",
             'email': email
         }, status=200 if is_update else 201)
     except Exception as e:
-        logger.error("Error processing enrollment/update: %s", str(e))
         return Response({'success': False, 'message': f'Error processing request: {str(e)}'}, status=500)
+
+@api_view(['POST'])
+@permission_classes([IsTeacher])
+def bulk_enroll(request) -> Response:
+    excel_file = request.FILES.get('excel_file')
+    if not excel_file or not excel_file.name.endswith(('.xls', '.xlsx')):
+        return Response({'success': False, 'message': 'Valid Excel file required'}, status=400)
+    
+    try:
+        df = pd.read_excel(excel_file)
+        df.columns = df.columns.str.strip().str.upper()
+        required_columns = ['NAME', 'USN', 'BRANCH', 'SEMESTER', 'SECTION', 'MAIL ID', 'PROCTOR_USERNAME']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return Response({'success': False, 'message': f'Missing columns: {", ".join(missing_columns)}'}, status=400)
+        
+        enrolled_students = []
+        updated_students = []
+        warnings = []
+        all_students = load_all_students()
+        
+        for index, row in df.iterrows():
+            name = str(row['NAME']).strip()
+            usn = str(row['USN']).strip()
+            branch_name = str(row['BRANCH']).strip()
+            semester = str(row['SEMESTER']).strip()
+            section = str(row['SECTION']).strip()
+            email = str(row['MAIL ID']).strip()
+            proctor_username = str(row['PROCTOR_USERNAME']).strip()
+            
+            if not all([name, usn, branch_name, semester, section, email]):
+                warnings.append(f"Row {index + 2}: Missing data")
+                continue
+            
+            try:
+                branch, _ = Branch.objects.get_or_create(name=branch_name)
+                proctor = User.objects.filter(username=proctor_username, role='teacher').first() if proctor_username else None
+                
+                existing_student = Student.objects.filter(usn=usn).first()
+                if existing_student:
+                    student = existing_student
+                    if name != student.name:
+                        student.name = name
+                    if branch != student.branch:
+                        student.branch = branch
+                    if semester != student.semester:
+                        student.semester = semester
+                    if section != student.section:
+                        student.section = section
+                    if proctor and proctor != student.proctor:
+                        student.proctor = proctor
+                    if email != student.user.email:
+                        if User.objects.filter(email=email).exclude(id=student.user.id).exists():
+                            warnings.append(f"Row {index + 2}: Email in use")
+                            continue
+                        student.user.email = email
+                        student.user.save()
+                    student.save()
+                    updated_students.append({'name': name, 'usn': usn})
+                else:
+                    if User.objects.filter(email=email).exists():
+                        warnings.append(f"Row {index + 2}: Email in use")
+                        continue
+                    user = User.objects.create_user(
+                        username=usn,
+                        email=email,
+                        password="default123",
+                        role='student'
+                    )
+                    student = Student.objects.create(
+                        name=name,
+                        usn=usn,
+                        branch=branch,
+                        semester=semester,
+                        section=section,
+                        user=user,
+                        proctor=proctor
+                    )
+                    enrolled_students.append({'name': name, 'usn': usn})
+                
+                student_data = next((s for s in all_students if s['usn'] == usn), None)
+                if student_data:
+                    student_data.update({'name': name, 'branch': branch.name, 'semester': semester, 'section': section})
+                else:
+                    all_students.append({'name': name, 'usn': usn, 'branch': branch.name, 'semester': semester, 'section': section, 'encodings': []})
+            
+            except Exception as e:
+                warnings.append(f"Row {index + 2}: Error - {str(e)}")
+        
+        with open(settings.PICKLE_FILE, 'wb') as f:
+            for s in all_students:
+                pickle.dump(s, f)
+        
+        response_data = {
+            'success': True,
+            'message': f"Enrolled {len(enrolled_students)} new students, updated {len(updated_students)}. Default password: 'default123'",
+            'enrolled_students': enrolled_students,
+            'updated_students': updated_students,
+            'warnings': warnings
+        }
+        return Response(response_data, status=201)
+    except Exception as e:
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
 @api_view(['POST'])
 @permission_classes([IsTeacherOrHOD])
 def generate_statistics(request) -> Response:
-    logger.info("Received generate_statistics request")
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        logger.error("Authentication token missing")
-        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
     file_id = request.data.get('file_id')
     if not file_id:
-        logger.error("Missing file ID")
         return Response({'success': False, 'message': 'Missing file ID'}, status=400)
     try:
         record = AttendanceRecord.objects.get(id=file_id)
         if not record.file_path or not os.path.exists(record.file_path):
-            logger.error("Attendance file not found for record %s", file_id)
             return Response({'success': False, 'message': 'Attendance file not found'}, status=404)
         attendance_records = parse_attendance(record.file_path)
-        if not attendance_records:
-            logger.warning("No valid attendance data in file %s", record.file_path)
-            return Response({'success': False, 'message': 'No valid attendance data in file'}, status=404)
         stats = calculate_statistics(attendance_records)
         total_sessions = len(attendance_records)
-        pdf_filename = f"attendance_report_{record.semester}_{record.subject}_{record.section}_{record.date.strftime('%Y%m%d')}.pdf"
+        pdf_filename = f"attendance_report_{record.branch.name}_{record.semester}_{record.subject}_{record.section}_{record.date.strftime('%Y%m%d')}.pdf"
         pdf_path = os.path.join(settings.MEDIA_ROOT, pdf_filename)
         os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
         generate_pdf(stats, pdf_path, record)
         detailed_stats = {
-            student: {
-                'percentage': round(percentage, 2),
-                'present': count,
-                'absent': total_sessions - count
-            }
-            for student, (count, percentage) in stats.items()
+            student: {'percentage': round(p, 2), 'present': c, 'absent': total_sessions - c}
+            for student, (c, p) in stats.items()
         }
-        above_75 = [
-            {'student': s, 'percentage': data['percentage'], 'present': data['present'], 'absent': data['absent']}
-            for s, data in detailed_stats.items() if data['percentage'] >= 75
-        ]
-        below_75 = [
-            {'student': s, 'percentage': data['percentage'], 'present': data['present'], 'absent': data['absent']}
-            for s, data in detailed_stats.items() if data['percentage'] < 75
-        ]
+        above_75 = [{'student': s, **data} for s, data in detailed_stats.items() if data['percentage'] >= 75]
+        below_75 = [{'student': s, **data} for s, data in detailed_stats.items() if data['percentage'] < 75]
         above_75.sort(key=lambda x: x['percentage'], reverse=True)
         below_75.sort(key=lambda x: x['percentage'], reverse=True)
-        logger.info("Generated statistics for %s_%s_%s: %d sessions", record.semester, record.subject, record.section, total_sessions)
         return Response({
             'success': True,
             'total_sessions': total_sessions,
@@ -377,143 +394,99 @@ def generate_statistics(request) -> Response:
             'pdf_url': f"/api/faculty/download-pdf/{pdf_filename}"
         })
     except AttendanceRecord.DoesNotExist:
-        logger.error("Attendance record with ID %s not found", file_id)
         return Response({'success': False, 'message': 'Attendance record not found'}, status=404)
     except Exception as e:
-        logger.error("Error generating statistics: %s", str(e))
-        return Response({'success': False, 'message': f'Error generating statistics: {str(e)}'}, status=500)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
 @api_view(['GET'])
 @permission_classes([IsTeacherOrHOD])
 def download_pdf(request, filename: str) -> FileResponse:
-    logger.info("Received download_pdf request for %s", filename)
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        logger.error("Authentication token missing")
-        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
     file_path = os.path.join(settings.MEDIA_ROOT, filename)
     if os.path.exists(file_path):
-        logger.info("Serving PDF file: %s", file_path)
         return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=os.path.basename(file_path))
-    else:
-        logger.error("PDF file not found: %s", file_path)
-        return Response({'success': False, 'message': 'File not found'}, status=404)
+    return Response({'success': False, 'message': 'File not found'}, status=404)
 
 @api_view(['GET'])
 @permission_classes([IsTeacherOrHOD])
 def get_students(request) -> Response:
-    logger.info("Received get_students request")
+    branch_id = request.query_params.get('branch')
     semester = request.query_params.get('semester')
     section = request.query_params.get('section')
-    if not semester or not section:
-        logger.error("Missing semester or section in query parameters: semester=%s, section=%s", semester, section)
-        return Response({'success': False, 'message': 'Semester and section are required'}, status=400)
+    if not all([branch_id, semester, section]):
+        return Response({'success': False, 'message': 'Branch, semester, and section required'}, status=400)
     try:
-        students = Student.objects.filter(semester=semester, section=section)
-        student_list = [{'usn': s.usn, 'name': s.name, 'email': s.user.email} for s in students]
-        logger.info("Fetched %d students for semester %s, section %s", len(student_list), semester, section)
+        branch = Branch.objects.get(id=branch_id)
+        students = Student.objects.filter(branch=branch, semester=semester, section=section)
+        student_list = [{'usn': s.usn, 'name': s.name, 'email': s.user.email, 'proctor': s.proctor.username if s.proctor else None} for s in students]
         return Response({'success': True, 'students': student_list})
+    except Branch.DoesNotExist:
+        return Response({'success': False, 'message': 'Branch not found'}, status=404)
     except Exception as e:
-        logger.error("Error fetching students: %s", str(e))
-        return Response({'success': False, 'message': f'Error fetching students: {str(e)}'}, status=500)
-
-@api_view(['GET'])
-@permission_classes([IsTeacherOrHOD])
-def get_student_photos(request) -> Response:
-    logger.info("Received get_student_photos request")
-    usn = request.query_params.get('usn')
-    if not usn:
-        logger.error("Missing usn parameter")
-        return Response({'success': False, 'message': 'USN is required'}, status=400)
-    try:
-        student = Student.objects.filter(usn=usn).first()
-        if not student:
-            logger.warning("Student with USN %s not found", usn)
-            return Response({'success': False, 'message': 'Student not found'}, status=404)
-        photo_dir = os.path.join(settings.STUDENT_DATA_PATH, usn)
-        if not os.path.exists(photo_dir):
-            logger.info("No photos found for student %s", usn)
-            return Response({'success': True, 'photos': []})
-        photo_files = [os.path.basename(f) for f in glob.glob(os.path.join(photo_dir, "*.jpg"))]
-        photo_urls = [f"/api/faculty/student-photo/{usn}/{filename}" for filename in photo_files]
-        logger.info("Fetched %d photos for student %s", len(photo_urls), usn)
-        return Response({'success': True, 'photos': photo_urls})
-    except Exception as e:
-        logger.error("Error fetching student photos: %s", str(e))
-        return Response({'success': False, 'message': f'Error fetching photos: {str(e)}'}, status=500)
-
-@api_view(['GET'])
-@permission_classes([IsTeacherOrHOD])
-def serve_student_photo(request, usn: str, filename: str) -> FileResponse:
-    logger.info("Received serve_student_photo request for %s/%s", usn, filename)
-    photo_path = os.path.join(settings.STUDENT_DATA_PATH, usn, filename)
-    if os.path.exists(photo_path):
-        logger.info("Serving photo: %s", photo_path)
-        return FileResponse(open(photo_path, 'rb'), content_type='image/jpeg')
-    else:
-        logger.error("Photo not found: %s", photo_path)
-        return Response({'success': False, 'message': 'Photo not found'}, status=404)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
 @api_view(['POST'])
 @permission_classes([IsTeacher])
 def submit_leave_request(request) -> Response:
-    logger.info("Received submit_leave_request request")
     token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
     if not token:
-        logger.error("Authentication token missing")
         return Response({'success': False, 'message': 'Authentication token required'}, status=401)
-
+    
+    branch_ids = request.data.get('branches', [])  # List of branch IDs
     start_date = request.data.get('start_date')
     end_date = request.data.get('end_date')
     reason = request.data.get('reason')
-
-    if not all([start_date, end_date, reason]):
-        logger.error("Missing required fields: start_date=%s, end_date=%s, reason=%s", start_date, end_date, reason)
-        return Response({'success': False, 'message': 'Start date, end date, and reason are required'}, status=400)
-
+    
+    if not all([branch_ids, start_date, end_date, reason]):
+        return Response({'success': False, 'message': 'Branches, dates, and reason required'}, status=400)
+    
     try:
         start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
         end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
         if start_date > end_date:
-            logger.error("Invalid date range: start_date=%s, end_date=%s", start_date, end_date)
             return Response({'success': False, 'message': 'Start date must be before end date'}, status=400)
-
+        
         faculty = request.user
-        leave_request = LeaveRequest.objects.create(
-            faculty=faculty,
-            start_date=start_date,
-            end_date=end_date,
-            reason=reason
-        )
-        logger.info("Leave request created for %s: %s to %s", faculty.username, start_date, end_date)
+        leave_requests = []
+        for branch_id in branch_ids:
+            branch = Branch.objects.get(id=branch_id)
+            if not FacultyAssignment.objects.filter(faculty=faculty, branch=branch).exists():
+                continue  # Skip if faculty not assigned to this branch
+            leave_request = LeaveRequest.objects.create(
+                faculty=faculty,
+                branch=branch,
+                start_date=start_date,
+                end_date=end_date,
+                reason=reason
+            )
+            leave_requests.append({
+                'leave_id': str(leave_request.id),
+                'branch': branch.name,
+                'status': leave_request.status
+            })
+        
+        if not leave_requests:
+            return Response({'success': False, 'message': 'No valid branches for leave request'}, status=400)
+        
         return Response({
             'success': True,
-            'message': 'Leave request submitted successfully',
-            'leave_id': str(leave_request.id),
-            'status': leave_request.status
+            'message': 'Leave requests submitted successfully',
+            'leave_requests': leave_requests
         }, status=201)
-    except ValueError as e:
-        logger.error("Invalid date format: %s", str(e))
-        return Response({'success': False, 'message': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+    except Branch.DoesNotExist:
+        return Response({'success': False, 'message': 'One or more branches not found'}, status=404)
     except Exception as e:
-        logger.error("Error submitting leave request: %s", str(e))
-        return Response({'success': False, 'message': f'Error submitting leave request: {str(e)}'}, status=500)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
 @api_view(['GET'])
 @permission_classes([IsTeacher])
 def get_leave_requests(request) -> Response:
-    logger.info("Received get_leave_requests request from faculty")
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        logger.error("Authentication token missing")
-        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
-
     try:
         faculty = request.user
-        leave_requests = LeaveRequest.objects.filter(faculty=faculty).select_related('reviewed_by')
+        leave_requests = LeaveRequest.objects.filter(faculty=faculty).select_related('branch', 'reviewed_by')
         requests_data = [
             {
                 'id': str(lr.id),
+                'branch': lr.branch.name,
                 'start_date': lr.start_date.strftime('%Y-%m-%d'),
                 'end_date': lr.end_date.strftime('%Y-%m-%d'),
                 'reason': lr.reason,
@@ -524,37 +497,29 @@ def get_leave_requests(request) -> Response:
             }
             for lr in leave_requests
         ]
-        logger.info("Retrieved %d leave requests for %s", len(requests_data), faculty.username)
         return Response({
             'success': True,
             'message': 'Leave requests retrieved successfully' if requests_data else 'No leave requests found',
             'leave_requests': requests_data
         })
     except Exception as e:
-        logger.error("Error retrieving leave requests: %s", str(e))
-        return Response({'success': False, 'message': f'Error retrieving leave requests: {str(e)}'}, status=500)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
 @api_view(['GET'])
 @permission_classes([IsTeacher])
 def get_student_leave_requests(request) -> Response:
-    logger.info("Received get_student_leave_requests request from faculty")
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        logger.error("Authentication token missing")
-        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
-
     try:
         user = request.user
         if user.role != 'teacher':
-            logger.error("Unauthorized access attempt by %s with role %s", user.username, user.role)
-            return Response({'success': False, 'message': 'Only faculty can access this endpoint'}, status=403)
+            return Response({'success': False, 'message': 'Only faculty can access this'}, status=403)
         
-        leave_requests = StudentLeaveRequest.objects.filter(status='PENDING').select_related('student')
+        leave_requests = StudentLeaveRequest.objects.filter(student__student_profile__proctor=user, status='PENDING').select_related('student')
         leave_data = [
             {
                 'id': str(lr.id),
                 'student': lr.student.username,
                 'student_name': Student.objects.get(user=lr.student).name,
+                'branch': Student.objects.get(user=lr.student).branch.name,
                 'start_date': lr.start_date.strftime('%Y-%m-%d'),
                 'end_date': lr.end_date.strftime('%Y-%m-%d'),
                 'reason': lr.reason,
@@ -562,228 +527,60 @@ def get_student_leave_requests(request) -> Response:
             }
             for lr in leave_requests
         ]
-        logger.info("Retrieved %d pending student leave requests for faculty %s", len(leave_data), user.username)
         return Response({
             'success': True,
-            'message': 'Student leave requests retrieved successfully' if leave_data else 'No pending student leave requests',
+            'message': 'Student leave requests retrieved successfully' if leave_data else 'No pending requests',
             'leave_requests': leave_data
         })
     except Exception as e:
-        logger.error("Error retrieving student leave requests: %s", str(e))
-        return Response({'success': False, 'message': f'Error retrieving student leave requests: {str(e)}'}, status=500)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
 @api_view(['POST'])
 @permission_classes([IsTeacher])
 def manage_student_leave_request(request) -> Response:
-    logger.info("Received manage_student_leave_request request")
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        logger.error("Authentication token missing")
-        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
-
     leave_id = request.data.get('leave_id')
     action = request.data.get('action')
-    if not leave_id or not action:
-        logger.error("Missing required fields: leave_id=%s, action=%s", leave_id, action)
-        return Response({'success': False, 'message': 'Leave ID and action are required'}, status=400)
+    if not all([leave_id, action]) or action not in ['APPROVE', 'REJECT']:
+        return Response({'success': False, 'message': 'Leave ID and valid action required'}, status=400)
     
-    if action not in ['APPROVE', 'REJECT']:
-        logger.error("Invalid action: %s", action)
-        return Response({'success': False, 'message': 'Invalid action. Use APPROVE or REJECT'}, status=400)
-
     try:
         user = request.user
         if user.role != 'teacher':
-            logger.error("Unauthorized access attempt by %s with role %s", user.username, user.role)
-            return Response({'success': False, 'message': 'Only faculty can manage student leave requests'}, status=403)
+            return Response({'success': False, 'message': 'Only faculty can manage this'}, status=403)
         
-        leave_request = StudentLeaveRequest.objects.get(id=leave_id, status='PENDING')
+        leave_request = StudentLeaveRequest.objects.get(id=leave_id, status='PENDING', student__student_profile__proctor=user)
         leave_request.status = 'APPROVED' if action == 'APPROVE' else 'REJECTED'
         leave_request.reviewed_at = timezone.now()
         leave_request.reviewed_by = user
         leave_request.save()
-        logger.info("Student leave request %s %sd by %s", leave_id, action.lower(), user.username)
         return Response({
             'success': True,
             'message': f'Student leave request {action.lower()}d successfully'
         })
     except StudentLeaveRequest.DoesNotExist:
-        logger.error("Student leave request with ID %s not found or already processed", leave_id)
-        return Response({'success': False, 'message': 'Leave request not found or already processed'}, status=404)
+        return Response({'success': False, 'message': 'Leave request not found or not assigned to you'}, status=404)
     except Exception as e:
-        logger.error("Error managing student leave request: %s", str(e))
-        return Response({'success': False, 'message': f'Error managing leave request: {str(e)}'}, status=500)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)
 
-@api_view(['POST'])
+@api_view(['GET'])
 @permission_classes([IsTeacher])
-def bulk_enroll(request) -> Response:
-    logger.info("Received bulk_enroll request")
-    token = request.headers.get('Authorization', '').replace('Bearer ', '').strip()
-    if not token:
-        logger.error("Authentication token missing")
-        return Response({'success': False, 'message': 'Authentication token required'}, status=401)
-
-    excel_file = request.FILES.get('excel_file')
-    if not excel_file:
-        logger.error("No Excel file provided")
-        return Response({'success': False, 'message': 'Excel file is required'}, status=400)
-
-    # Validate file extension
-    if not excel_file.name.endswith(('.xls', '.xlsx')):
-        logger.error("Invalid file format: %s", excel_file.name)
-        return Response({'success': False, 'message': 'File must be .xls or .xlsx'}, status=400)
-
+def get_faculty_assignments(request) -> Response:
     try:
-        # Read Excel file using pandas
-        df = pd.read_excel(excel_file, sheet_name=0)
-        logger.info("Raw column names in Excel: %s", df.columns.tolist())
-        df.columns = df.columns.str.strip().str.upper()
-        logger.info("Processed column names: %s", df.columns.tolist())
-
-        required_columns = ['NAME', 'USN', 'SEMESTER', 'SECTION', 'MAIL ID']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            logger.error("Missing required columns in Excel: %s", missing_columns)
-            return Response({
-                'success': False,
-                'message': f'Missing required columns: {", ".join(missing_columns)}'
-            }, status=400)
-
-        enrolled_students = []
-        updated_students = []
-        warnings = []
-        default_password = "default123"
-        all_students = load_all_students()
-
-        for index, row in df.iterrows():
-            name = str(row['NAME']).strip()
-            usn = str(row['USN']).strip()
-            semester = str(row['SEMESTER']).strip()
-            section = str(row['SECTION']).strip()
-            email = str(row['MAIL ID']).strip()
-
-            # Validate row data
-            if not all([name, usn, semester, section, email]):
-                warnings.append(f"Row {index + 2}: Missing data - {name} ({usn})")
-                logger.warning("Skipping row %d due to missing data: name=%s, usn=%s, semester=%s, section=%s, email=%s",
-                              index + 2, name, usn, semester, section, email)
-                continue
-
-            try:
-                # Check for existing student
-                existing_student = Student.objects.filter(usn=usn).first()
-                if existing_student:
-                    # Update existing student
-                    logger.info("Updating existing student: %s (%s)", existing_student.name, usn)
-                    if name != existing_student.name:
-                        existing_student.name = name
-                        logger.info("Updated name for %s to %s", usn, name)
-                    if semester != existing_student.semester:
-                        existing_student.semester = semester
-                        logger.info("Updated semester for %s to %s", usn, semester)
-                    if section != existing_student.section:
-                        existing_student.section = section
-                        logger.info("Updated section for %s to %s", usn, section)
-                    existing_student.save()  # last_modified updated automatically
-
-                    # Update User model (email)
-                    if email != existing_student.user.email:
-                        if User.objects.filter(email=email).exclude(id=existing_student.user.id).exists():
-                            warnings.append(f"Row {index + 2}: Email in use - {name} ({usn}) with {email}")
-                            logger.warning("Email %s already in use at row %d", email, index + 2)
-                            continue
-                        existing_student.user.email = email
-                        existing_student.user.save()
-                        logger.info("Updated email for %s to %s", usn, email)
-
-                    # Update pickle file entry
-                    student_data = next((s for s in all_students if s['usn'] == usn), None)
-                    if student_data:
-                        student_data.update({
-                            'name': name,
-                            'semester': semester,
-                            'section': section,
-                        })
-                        logger.info("Updated pickle data for student %s", usn)
-                    else:
-                        student_data = {
-                            'name': name,
-                            'usn': usn,
-                            'semester': semester,
-                            'section': section,
-                            'encodings': []
-                        }
-                        all_students.append(student_data)
-                        logger.info("Added updated student %s to pickle", usn)
-
-                    updated_students.append({'name': name, 'usn': usn})
-                else:
-                    # Check for email uniqueness for new student
-                    if User.objects.filter(email=email).exists():
-                        warnings.append(f"Row {index + 2}: Email in use - {name} ({usn}) with {email}")
-                        logger.warning("Email %s already in use at row %d", email, index + 2)
-                        continue
-
-                    # Create new User and Student
-                    user = User.objects.create_user(
-                        username=usn,
-                        email=email,
-                        password=default_password,
-                        role='student'
-                    )
-                    student = Student.objects.create(
-                        name=name,
-                        usn=usn,
-                        semester=semester,
-                        section=section,
-                        user=user
-                    )
-                    enrolled_students.append({'name': name, 'usn': usn})
-
-                    # Add to pickle data
-                    student_data = {
-                        'name': name,
-                        'usn': usn,
-                        'semester': semester,
-                        'section': section,
-                        'encodings': []
-                    }
-                    all_students.append(student_data)
-                    logger.info("Enrolled new student: %s (%s) at row %d", name, usn, index + 2)
-
-            except Exception as e:
-                warnings.append(f"Row {index + 2}: Error - {name} ({usn}) - {str(e)}")
-                logger.error("Error processing student at row %d: %s", index + 2, str(e))
-
-        if not enrolled_students and not updated_students:
-            logger.error("No students enrolled or updated from the Excel file")
-            return Response({
-                'success': False,
-                'message': 'No students enrolled or updated. Check warnings for details.',
-                'warnings': warnings
-            }, status=400)
-
-        # Update pickle file with all students
-        try:
-            with open(settings.PICKLE_FILE, 'wb') as f:
-                for s in all_students:
-                    pickle.dump(s, f)
-            logger.info("Updated pickle file with %d new students and %d updated students", len(enrolled_students), len(updated_students))
-        except PermissionError as e:
-            logger.error("Permission denied writing to pickle file: %s", str(e))
-            return Response({'success': False, 'message': 'Permission denied updating student data'}, status=500)
-
-        response_data = {
+        faculty = request.user
+        assignments = FacultyAssignment.objects.filter(faculty=faculty)
+        assignment_data = [
+            {
+                'branch': a.branch.name,
+                'semester': a.semester,
+                'section': a.section,
+                'subject': a.subject
+            }
+            for a in assignments
+        ]
+        return Response({
             'success': True,
-            'message': f"Successfully enrolled {len(enrolled_students)} new students and updated {len(updated_students)} existing students. Default password for new students is 'default123'.",
-            'enrolled_students': enrolled_students,
-            'updated_students': updated_students
-        }
-        if warnings:
-            response_data['warnings'] = warnings
-        logger.info("Bulk enrollment completed: %d new students enrolled, %d students updated, %d warnings", len(enrolled_students), len(updated_students), len(warnings))
-        return Response(response_data, status=201)
-
+            'message': 'Assignments retrieved successfully' if assignment_data else 'No assignments found',
+            'assignments': assignment_data
+        })
     except Exception as e:
-        logger.error("Error processing bulk enrollment: %s", str(e))
-        return Response({'success': False, 'message': f'Error processing bulk enrollment: {str(e)}'}, status=500)
+        return Response({'success': False, 'message': f'Error: {str(e)}'}, status=500)

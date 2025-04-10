@@ -17,22 +17,35 @@ class User(AbstractUser):
         related_name='api_user_groups',
         blank=True,
         help_text='The groups this user belongs to.',
-        verbose_name='groups',
     )
     user_permissions = models.ManyToManyField(
         'auth.Permission',
         related_name='api_user_permissions',
         blank=True,
         help_text='Specific permissions for this user.',
-        verbose_name='user permissions',
     )
 
     def __str__(self):
         return self.username
 
+class Branch(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    hod = models.OneToOneField(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        limit_choices_to={'role': 'hod'},
+        related_name='managed_branch'
+    )
+
+    def __str__(self):
+        return self.name
+
 class Student(models.Model):
     name = models.CharField(max_length=100)
     usn = models.CharField(max_length=50, unique=True)
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='students')
     semester = models.CharField(max_length=10)
     section = models.CharField(max_length=10)
     user = models.OneToOneField(
@@ -41,17 +54,46 @@ class Student(models.Model):
         null=True,
         related_name='student_profile'
     )
+    proctor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='proctor_students',
+        limit_choices_to={'role': 'teacher'}
+    )
     last_modified = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.name} ({self.usn})"
+        return f"{self.name} ({self.usn}) - {self.branch.name}"
 
     def clean(self):
         if self.user and self.user.role != 'student':
             raise ValidationError("The linked User must have the 'student' role.")
+        if self.proctor and self.proctor.role != 'teacher':
+            raise ValidationError("Proctor must be a teacher.")
+
+class FacultyAssignment(models.Model):
+    faculty = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='teaching_assignments',
+        limit_choices_to={'role': 'teacher'}
+    )
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='faculty_assignments')
+    semester = models.CharField(max_length=10)
+    section = models.CharField(max_length=10)
+    subject = models.CharField(max_length=100)
+
+    class Meta:
+        unique_together = ('faculty', 'branch', 'semester', 'section', 'subject')
+
+    def __str__(self):
+        return f"{self.faculty.username} - {self.subject} ({self.branch.name}, {self.semester}, {self.section})"
 
 class AttendanceRecord(models.Model):
     date = models.DateField(auto_now_add=True)
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='attendance_records')
     semester = models.CharField(max_length=10)
     section = models.CharField(max_length=10)
     subject = models.CharField(max_length=100)
@@ -64,7 +106,7 @@ class AttendanceRecord(models.Model):
         related_name='attendance_records',
         limit_choices_to={'role': 'teacher'}
     )
-    status = models.CharField(  # Added status field
+    status = models.CharField(
         max_length=20,
         choices=(('pending', 'Pending'), ('completed', 'Completed')),
         default='completed'
@@ -72,7 +114,7 @@ class AttendanceRecord(models.Model):
 
     def __str__(self):
         faculty_name = self.faculty.get_full_name() if self.faculty else "Unknown"
-        return f"{self.subject} - {self.date} - Sem {self.semester} Sec {self.section} by {faculty_name}"
+        return f"{self.subject} - {self.date} - {self.branch.name}, Sem {self.semester}, Sec {self.section} by {faculty_name}"
 
 class AttendanceDetail(models.Model):
     record = models.ForeignKey(AttendanceRecord, on_delete=models.CASCADE, related_name='details')
@@ -98,6 +140,7 @@ class LeaveRequest(models.Model):
         related_name='faculty_leave_requests',
         limit_choices_to={'role__in': ('teacher', 'hod')},
     )
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='leave_requests')
     start_date = models.DateField()
     end_date = models.DateField()
     reason = models.TextField()
@@ -114,7 +157,7 @@ class LeaveRequest(models.Model):
     )
 
     def __str__(self):
-        return f"{self.faculty.username} - {self.start_date} to {self.end_date} ({self.status})"
+        return f"{self.faculty.username} - {self.branch.name} - {self.start_date} to {self.end_date} ({self.status})"
 
     def clean(self):
         if self.start_date > self.end_date:
