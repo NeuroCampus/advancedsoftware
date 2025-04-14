@@ -14,3 +14,5 @@ python-decouple==3.8  # Manage environment variables
 django-otp==1.3.0  # One-time password (OTP) support
 pyotp==2.9.0  # OTP generation and verification
 django-email-utils==1.0.0  # Email utilities (optional, can use Django's built-in email)
+pandas==2.2.2
+openpyxl==3.1.5

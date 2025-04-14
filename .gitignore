@@ -1,5 +1,6 @@
 # Logs
 logs/
+logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -43,9 +44,15 @@ media/
 *.njsproj
 *.sln
 *.sw?
+
 # Dlib and Face Recognition Model Files
 *.dat
 shape_predictor_*.dat
 dlib_face_recognition_resnet_model_v1.dat
+
+# Node Modules and Build Directories
 node_modules
+dist
+dist-ssr
+*.local
 django_backend/credentials.json
