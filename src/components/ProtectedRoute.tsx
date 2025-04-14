@@ -1,38 +1,31 @@
-import React from 'react';
+
+import { useAuth } from '@/contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { useUser } from '../contexts/UserContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRoles?: string[];  // Changed to array to support multiple roles
-  redirectPath?: string;     // Optional custom redirect path
+  allowedRoles: string[];
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ 
-  children, 
-  requiredRoles, 
-  redirectPath = '/', 
+export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  allowedRoles,
 }) => {
-  const { token, role } = useUser();
+  const { user, isLoading } = useAuth();
 
-  // Debug logging to help troubleshoot
-  console.log('[ProtectedRoute] Checking auth:', { token, role, requiredRoles });
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  }
 
-  // If no token, redirect to login
-  if (!token) {
-    console.log('[ProtectedRoute] No token found, redirecting to /login');
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  // If requiredRoles are specified and user's role isn't included, redirect
-  if (requiredRoles && requiredRoles.length > 0 && !requiredRoles.includes(role || '')) {
-    console.log(`[ProtectedRoute] Role ${role} not in ${requiredRoles}, redirecting to ${redirectPath}`);
+  if (!allowedRoles.includes(user.role)) {
+    // Redirect to the user's dashboard based on their role
+    const redirectPath = `/${user.role}`;
     return <Navigate to={redirectPath} replace />;
   }
 
-  // If all checks pass, render the children
-  console.log('[ProtectedRoute] Access granted');
   return <>{children}</>;
 };
-
-export default ProtectedRoute;
