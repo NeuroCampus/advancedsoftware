@@ -24,9 +24,11 @@ urlpatterns = [
     path('student/delete-certificate/', student_views.delete_certificate, name='delete_certificate'),
     path('student/update-profile/', student_views.update_profile, name='update_profile'),
     path('student/announcements/', student_views.get_announcements, name='get_student_announcements'),
-    path('student/study-materials/', student_views.download_study_materials, name='download_study_materials'),
     path('student/chat/', student_views.manage_chat, name='student_chat'),
     path('student/notifications/', student_views.get_notifications, name='get_student_notifications'),
+    path('check-auth/', student_views.check_auth, name='check_auth'),
+    path('logout/', student_views.logout, name='logout'),
+    path('student/upload-face-encodings/', student_views.upload_face_encodings, name='upload_face_encodings'),
 
     # Faculty endpoints
     path('faculty/dashboard/', faculty_views.dashboard_overview, name='faculty_dashboard'),

@@ -10,13 +10,16 @@ from ..models import (
 )
 import logging
 from django.utils import timezone
-from django.db.models import Avg, Count
+from django.db.models import Avg, Count ,  Q
 from datetime import datetime, timedelta
 import pandas as pd
 import os
 import cv2
 import numpy as np
-from .utils import calculate_statistics, generate_pdf, parse_attendance
+from django.core.files.storage import default_storage
+from django.core.exceptions import ValidationError
+from django.core.validators import FileExtensionValidator
+from .utils import get_google_sheet_id, update_attendance_in_sheet, compute_face_distance, is_same_person , validate_image_size
 
 logger = logging.getLogger(__name__)
 
@@ -95,18 +98,16 @@ def take_attendance(request):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         faculty = request.user
-        timetable = Timetable.objects.filter(
-            faculty_assignment__faculty=faculty,
-            faculty_assignment__branch=branch,
-            faculty_assignment__semester=semester,
-            faculty_assignment__section=section,
-            faculty_assignment__subject=subject,
-            day=timezone.now().strftime('%a').upper()[:3]
-        ).first()
-        if not timetable:
+        if not FacultyAssignment.objects.filter(
+            faculty=faculty,
+            branch=branch,
+            semester=semester,
+            section=section,
+            subject=subject
+        ).exists():
             return Response({
                 'success': False,
-                'message': 'No scheduled class'
+                'message': 'Not assigned to this class'
             }, status=status.HTTP_403_FORBIDDEN)
         
         attendance_record = AttendanceRecord.objects.create(
@@ -115,43 +116,79 @@ def take_attendance(request):
             section=section,
             subject=subject,
             faculty=faculty,
-            assignment=timetable.faculty_assignment,
+            assignment=FacultyAssignment.objects.get(
+                faculty=faculty, branch=branch, semester=semester, section=section, subject=subject
+            ),
             status='completed',
             date=timezone.now()
         )
         
         students = Student.objects.filter(branch=branch, semester=semester, section=section)
+        present_students = set()
+        absent_students = set()
+        
         if method == 'ai':
             if not files:
                 return Response({
                     'success': False,
                     'message': 'Images required for AI attendance'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            present_students = set()
+            
             for file in files:
                 img_bytes = file.read()
                 nparr = np.frombuffer(img_bytes, np.uint8)
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                # Placeholder for AI logic (assumes external processing updates present_students)
-                # In practice, integrate face recognition here
-                for student in students:
-                    if student.face_encoding:  # Mock check
-                        present_students.add(student.id)
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                
+                try:
+                    # Detect faces using DLib
+                    from .utils import face_detector, shape_predictor, face_recognizer
+                    if not face_detector:
+                        raise ValueError("Face recognition models not initialized")
+                    
+                    faces = face_detector(gray)
+                    if not faces:
+                        continue
+                        
+                    for face in faces:
+                        shape = shape_predictor(img, face)
+                        face_encoding = np.array(face_recognizer.compute_face_descriptor(img, shape))
+                        
+                        # Match against student encodings
+                        for student in students:
+                            student_encodings = student.get_face_encodings()
+                            if student_encodings and is_same_person(student_encodings, face_encoding, threshold=0.4):
+                                present_students.add(student.id)
+                except Exception as e:
+                    logger.warning("AI face recognition failed for image: %s", str(e))
+                    continue
+            
+            # Mark attendance
             for student in students:
+                status = student.id in present_students
                 AttendanceDetail.objects.create(
                     record=attendance_record,
                     student=student,
-                    status=student.id in present_students
+                    status=status
                 )
-        else:
+                if status:
+                    present_students.add((student.name, student.usn))
+                else:
+                    absent_students.add((student.name, student.usn))
+                    
+        else:  # Manual method
             if not manual_attendance:
                 return Response({
                     'success': False,
                     'message': 'Attendance data required for manual method'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            valid_student_ids = set(students.values_list('id', flat=True))
             for entry in manual_attendance:
                 student_id = entry.get('student_id')
                 status_val = entry.get('status')
+                if student_id not in valid_student_ids:
+                    continue
                 student = students.get(id=student_id)
                 if student:
                     AttendanceDetail.objects.create(
@@ -159,23 +196,64 @@ def take_attendance(request):
                         student=student,
                         status=status_val
                     )
+                    if status_val:
+                        present_students.add((student.name, student.usn))
+                    else:
+                        absent_students.add((student.name, student.usn))
         
+        # Google Sheets integration
+        sheet_id = get_google_sheet_id(branch.name, subject.name, section.name, semester.number)
+        if sheet_id:
+            update_attendance_in_sheet(
+                sheet_id,
+                [(name, usn) for name, usn in present_students if isinstance(name, str)],
+                [(name, usn) for name, usn in absent_students if isinstance(name, str)],
+                timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+            )
+        
+        # Notify students
         Notification.objects.create(
             title="Attendance Recorded",
-            message=f"Attendance taken for {subject.name} ({section.name})",
+            message=f"Attendance taken for {subject.name} ({section.name}) by {faculty.username}",
             target_role='student',
             created_by=faculty
         )
         
         return Response({
             'success': True,
-            'message': 'Attendance recorded'
+            'message': 'Attendance recorded successfully'
         }, status=status.HTTP_200_OK)
+    
+    except Branch.DoesNotExist:
+        return Response({
+            'success': False,
+            'message': 'Branch not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Semester.DoesNotExist:
+        return Response({
+            'success': False,
+            'message': 'Semester not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Section.DoesNotExist:
+        return Response({
+            'success': False,
+            'message': 'Section not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Subject.DoesNotExist:
+        return Response({
+            'success': False,
+            'message': 'Subject not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except FacultyAssignment.DoesNotExist:
+        return Response({
+            'success': False,
+            'message': 'Not assigned to this class'
+        }, status=status.HTTP_403_FORBIDDEN)
     except Exception as e:
         logger.error("Error taking attendance: %s", str(e))
         return Response({
             'success': False,
-            'message': str(e)
+            'message': 'Failed to record attendance. Try manual method.'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
@@ -576,9 +654,16 @@ def manage_chat(request):
         channel_id = request.data.get('channel_id')
         message = request.data.get('message')
         channel_type = request.data.get('type')  # subject, proctor, faculty
-        student_id = request.data.get('student_id') if channel_type == 'proctor' else None
+        branch_id = request.data.get('branch_id') if channel_type == 'subject' else None
+        semester_id = request.data.get('semester_id') if channel_type == 'subject' else None
         subject_id = request.data.get('subject_id') if channel_type == 'subject' else None
         section_id = request.data.get('section_id') if channel_type == 'subject' else None
+        
+        if not message:
+            return Response({
+                'success': False,
+                'message': 'Message content required'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             faculty = request.user
@@ -590,36 +675,65 @@ def manage_chat(request):
                     content=message
                 )
             else:
-                if channel_type == 'proctor' and student_id:
-                    student = User.objects.get(id=student_id)
+                if channel_type == 'proctor':
                     channel = ChatChannel.objects.create(
                         channel_type='proctor',
                         faculty=faculty
                     )
-                    channel.students.add(student)
-                elif channel_type == 'subject' and subject_id and section_id:
+                    students = Student.objects.filter(proctor=faculty)
+                    if not students.exists():
+                        return Response({
+                            'success': False,
+                            'message': 'No students assigned to this proctor'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    channel.students.add(*[s.user for s in students])
+                elif channel_type == 'subject':
+                    if not all([branch_id, semester_id, subject_id, section_id]):
+                        return Response({
+                            'success': False,
+                            'message': 'Branch, semester, subject, and section IDs required'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    branch = Branch.objects.get(id=branch_id)
+                    semester = Semester.objects.get(id=semester_id)
                     subject = Subject.objects.get(id=subject_id)
                     section = Section.objects.get(id=section_id)
+                    if section.branch != branch or semester.branch != branch or subject.branch != branch:
+                        return Response({
+                            'success': False,
+                            'message': 'Invalid branch relationships'
+                        }, status=status.HTTP_400_BAD_REQUEST)
                     channel = ChatChannel.objects.create(
                         channel_type='subject',
                         subject=subject,
                         section=section,
+                        semester=semester,
+                        branch=branch,
                         faculty=faculty
                     )
-                    students = Student.objects.filter(section=section)
+                    students = Student.objects.filter(branch=branch, semester=semester, section=section)
+                    if not students.exists():
+                        return Response({
+                            'success': False,
+                            'message': 'No students found for this subject and section'
+                        }, status=status.HTTP_400_BAD_REQUEST)
                     channel.students.add(*[s.user for s in students])
                 elif channel_type == 'faculty':
                     channel = ChatChannel.objects.create(
                         channel_type='faculty',
                         faculty=faculty
                     )
-                    hod = Branch.objects.filter(facultyassignment__faculty=faculty).first().hod
-                    if hod:
-                        channel.students.add(hod)
+                    hod = Branch.objects.filter(facultyassignment__faculty=faculty).first()
+                    if hod and hod.hod:
+                        channel.students.add(hod.hod)
+                    else:
+                        return Response({
+                            'success': False,
+                            'message': 'No HOD assigned to this faculty'
+                        }, status=status.HTTP_400_BAD_REQUEST)
                 else:
                     return Response({
                         'success': False,
-                        'message': 'Invalid channel creation data'
+                        'message': 'Invalid channel type'
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
                 ChatMessage.objects.create(
@@ -658,7 +772,8 @@ def manage_profile(request):
                     'username': faculty.username,
                     'email': faculty.email,
                     'first_name': faculty.first_name,
-                    'last_name': faculty.last_name
+                    'last_name': faculty.last_name,
+                    'profile_picture': faculty.profile_picture.url if faculty.profile_picture else None
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
@@ -668,42 +783,67 @@ def manage_profile(request):
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    else:
-        email = request.data.get('email')
-        first_name = request.data.get('first_name')
-        last_name = request.data.get('last_name')
-        
-        try:
-            if email and email != faculty.email:
-                if User.objects.filter(email=email).exclude(id=faculty.id).exists():
-                    return Response({
-                        'success': False,
-                        'message': 'Email already in use'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                faculty.email = email
-            if first_name:
-                faculty.first_name = first_name
-            if last_name:
-                faculty.last_name = last_name
-            faculty.save()
-            
-            Notification.objects.create(
-                title="Profile Updated",
-                message="Your profile has been updated",
-                target_role='teacher',
-                created_by=faculty
-            )
-            
-            return Response({
-                'success': True,
-                'message': 'Profile updated'
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error("Error updating profile: %s", str(e))
+    email = request.data.get('email')
+    first_name = request.data.get('first_name')
+    last_name = request.data.get('last_name')
+    profile_picture = request.FILES.get('profile_picture')
+    
+    try:
+        if not any([email, first_name, last_name, profile_picture]):
             return Response({
                 'success': False,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'message': 'At least one field required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if email and email != faculty.email:
+            if User.objects.filter(email=email).exclude(id=faculty.id).exists():
+                return Response({
+                    'success': False,
+                    'message': 'Email already in use'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            faculty.email = email.strip()
+        if first_name:
+            faculty.first_name = first_name.strip()
+        if last_name:
+            faculty.last_name = last_name.strip()
+        if profile_picture:
+            try:
+                FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])(profile_picture)
+                validate_image_size(profile_picture)
+                if faculty.profile_picture:
+                    default_storage.delete(faculty.profile_picture.path)
+                faculty.profile_picture = profile_picture
+            except ValidationError as e:
+                return Response({
+                    'success': False,
+                    'message': str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        faculty.save()
+        
+        GenericNotification.objects.create(
+            title="Profile Updated",
+            message="Your profile has been updated",
+            target_role='teacher',
+            created_by=faculty
+        )
+        
+        return Response({
+            'success': True,
+            'data': {
+                'username': faculty.username,
+                'email': faculty.email,
+                'first_name': faculty.first_name,
+                'last_name': faculty.last_name,
+                'profile_picture': faculty.profile_picture.url if faculty.profile_picture else None
+            }
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error("Error updating profile: %s", str(e))
+        return Response({
+            'success': False,
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 @permission_classes([IsTeacher])

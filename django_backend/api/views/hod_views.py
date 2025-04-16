@@ -16,6 +16,10 @@ from rest_framework import status
 from django.db import IntegrityError
 from datetime import timedelta
 from django.utils.timezone import now
+from django.core.files.storage import default_storage
+from django.core.exceptions import ValidationError
+from django.core.validators import FileExtensionValidator
+from .utils import validate_image_size
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +213,7 @@ def manage_sections(request):
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
-@permission_classes([IsHOD])
+@permission_classes([IsHOD])  # Assuming IsHOD is a custom permission class
 def manage_students(request):
     """Manage student enrollment with auto-generated credentials."""
     action = request.data.get('action')  # 'create', 'update', 'delete', 'bulk_update'
@@ -233,9 +237,11 @@ def manage_students(request):
             section = Section.objects.get(id=section_id, branch=branch, semester=semester)
             if User.objects.filter(username=usn).exists():
                 return Response({'success': False, 'message': 'USN exists'}, status=status.HTTP_400_BAD_REQUEST)
+            first_name, *last_name_parts = name.split()
+            last_name = ' '.join(last_name_parts) if last_name_parts else ''
             user = User.objects.create(
                 username=usn, email=email, role='student',
-                first_name=name.split()[0], last_name=' '.join(name.split()[1:]) if len(name.split()) > 1 else ''
+                first_name=first_name, last_name=last_name
             )
             user.set_password('default@123')
             user.save()
@@ -264,8 +270,10 @@ def manage_students(request):
                 student.user.username = usn
             if name:
                 student.name = name.strip()
-                student.user.first_name = name.split()[0]
-                student.user.last_name = ' '.join(name.split()[1:]) if len(name.split()) > 1 else ''
+                first_name, *last_name_parts = name.split()
+                last_name = ' '.join(last_name_parts) if last_name_parts else ''
+                student.user.first_name = first_name
+                student.user.last_name = last_name
             if email:
                 student.user.email = email.strip()
             student.semester = semester
@@ -298,11 +306,16 @@ def manage_students(request):
                 email = data.get('email')
                 if not all([usn, name, email]):
                     continue
+                usn = usn.strip()
+                name = name.strip()
+                email = email.strip()
                 if User.objects.filter(username=usn).exists():
                     continue
+                first_name, *last_name_parts = name.split()
+                last_name = ' '.join(last_name_parts) if last_name_parts else ''
                 user = User.objects.create(
                     username=usn, email=email, role='student',
-                    first_name=name.split()[0], last_name=' '.join(name.split()[1:]) if len(name.split()) > 1 else ''
+                    first_name=first_name, last_name=last_name
                 )
                 user.set_password('default@123')
                 user.save()
@@ -329,39 +342,50 @@ def manage_students(request):
         logger.error("Error in manage_students: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
 @api_view(['POST'])
 @permission_classes([IsHOD])
 def manage_subjects(request):
-    """Create or update subjects."""
+    """Create or update subjects with subject code."""
     action = request.data.get('action')  # 'create', 'update'
     subject_id = request.data.get('subject_id')
     name = request.data.get('name')
+    subject_code = request.data.get('subject_code')
     semester_id = request.data.get('semester_id')
     try:
         hod = request.user
         branch = Branch.objects.get(hod=hod)
         if action == 'create':
-            if not all([name, semester_id]):
-                return Response({'success': False, 'message': 'Name and semester required'}, status=status.HTTP_400_BAD_REQUEST)
+            if not all([name, subject_code, semester_id]):
+                return Response({'success': False, 'message': 'Name, subject code, and semester required'}, status=status.HTTP_400_BAD_REQUEST)
             semester = Semester.objects.get(id=semester_id, branch=branch)
-            subject, created = Subject.objects.get_or_create(branch=branch, semester=semester, name=name.strip())
-            if not created:
-                return Response({'success': False, 'message': 'Subject exists'}, status=status.HTTP_400_BAD_REQUEST)
+            if Subject.objects.filter(branch=branch, subject_code=subject_code.strip()).exists():
+                return Response({'success': False, 'message': 'Subject code exists'}, status=status.HTTP_400_BAD_REQUEST)
+            subject = Subject.objects.create(
+                branch=branch,
+                semester=semester,
+                name=name.strip(),
+                subject_code=subject_code.strip().upper()
+            )
             return Response({
                 'success': True,
-                'data': {'subject_id': str(subject.id)}
+                'data': {'subject_id': str(subject.id), 'subject_code': subject.subject_code}
             }, status=status.HTTP_201_CREATED)
         elif action == 'update':
             if not all([subject_id, name]):
                 return Response({'success': False, 'message': 'Subject ID and name required'}, status=status.HTTP_400_BAD_REQUEST)
             subject = Subject.objects.get(id=subject_id, branch=branch)
             subject.name = name.strip()
+            if subject_code:
+                if Subject.objects.filter(branch=branch, subject_code=subject_code.strip()).exclude(id=subject.id).exists():
+                    return Response({'success': False, 'message': 'Subject code exists'}, status=status.HTTP_400_BAD_REQUEST)
+                subject.subject_code = subject_code.strip().upper()
             if semester_id:
                 subject.semester = Semester.objects.get(id=semester_id, branch=branch)
             subject.save()
             return Response({
                 'success': True,
-                'data': {'subject_id': str(subject.id)}
+                'data': {'subject_id': str(subject.id), 'subject_code': subject.subject_code}
             })
         return Response({'success': False, 'message': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
     except Branch.DoesNotExist:
@@ -472,17 +496,97 @@ def manage_faculty_assignments(request):
 @api_view(['POST'])
 @permission_classes([IsHOD])
 def manage_timetable(request):
-    """Manage timetable with conflict detection."""
-    action = request.data.get('action')  # 'create', 'update', 'delete'
+    """Manage timetable with conflict detection and Excel grid upload."""
+    action = request.data.get('action')  # 'create', 'update', 'delete', 'bulk_create'
     timetable_id = request.data.get('timetable_id')
     assignment_id = request.data.get('assignment_id')
     day = request.data.get('day')
     start_time = request.data.get('start_time')
     end_time = request.data.get('end_time')
     room = request.data.get('room', '')
+    semester_id = request.data.get('semester_id')
+    section_id = request.data.get('section_id')
+    file = request.FILES.get('file')  # Excel file for bulk_create
+    
     try:
         hod = request.user
         branch = Branch.objects.get(hod=hod)
+        
+        if action == 'bulk_create':
+            if not all([semester_id, section_id, room, file]):
+                return Response({'success': False, 'message': 'Semester, section, room, and file required'}, status=status.HTTP_400_BAD_REQUEST)
+            semester = Semester.objects.get(id=semester_id, branch=branch)
+            section = Section.objects.get(id=section_id, branch=branch, semester=semester)
+            if not file.name.endswith('.xlsx'):
+                return Response({'success': False, 'message': 'Excel file required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            df = pd.read_excel(file, engine='openpyxl', index_col='Day/Time')
+            time_slots = {}
+            for col in df.columns:
+                if '-' in col:
+                    start_str, end_str = col.split('-')
+                    time_slots[col] = (start_str.strip(), end_str.strip())
+                else:
+                    continue
+            
+            created_count = 0
+            errors = []
+            for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
+                if day not in df.index:
+                    continue
+                day_short = day[:3].upper()
+                for slot, (start_str, end_str) in time_slots.items():
+                    if slot not in df.columns:
+                        continue
+                    subject_code = df.loc[day, slot]
+                    if pd.isna(subject_code) or subject_code in ['TUTORIAL', 'BREAK', 'Lunch Break']:
+                        continue
+                    
+                    try:
+                        subject = Subject.objects.get(subject_code=subject_code.strip().upper(), branch=branch, semester=semester)
+                        assignment = FacultyAssignment.objects.filter(
+                            branch=branch, semester=semester, section=section, subject=subject
+                        ).first()
+                        if not assignment:
+                            errors.append(f"No assignment for {subject_code} in {semester.number}/{section.name}")
+                            continue
+                        
+                        faculty = assignment.faculty
+                        start = timezone.datetime.strptime(start_str, '%H:%M').time()
+                        end = timezone.datetime.strptime(end_str, '%H:%M').time()
+                        
+                        if day_short not in [c[0] for c in Timetable.DAY_CHOICES]:
+                            errors.append(f"Invalid day {day_short}")
+                            continue
+                        if start >= end:
+                            errors.append(f"Invalid time range for {subject_code}")
+                            continue
+                        
+                        conflicts = Timetable.objects.filter(
+                            faculty_assignment__faculty=faculty, day=day_short
+                        )
+                        for entry in conflicts:
+                            if start < entry.end_time and end > entry.start_time:
+                                errors.append(f"Conflict for {faculty.username} on {day_short} from {entry.start_time} to {entry.end_time}")
+                                continue
+                        
+                        timetable = Timetable.objects.create(
+                            faculty_assignment=assignment, day=day_short, start_time=start, end_time=end, room=room
+                        )
+                        create_notification(
+                            recipient=faculty,
+                            message=f"Timetable added: {subject.name} on {day_short} from {start} to {end} in {room}."
+                        )
+                        created_count += 1
+                    except Exception as e:
+                        errors.append(f"Error for {subject_code} on {day}: {str(e)}")
+                        continue
+            
+            return Response({
+                'success': True,
+                'data': {'created_count': created_count, 'errors': errors}
+            }, status=status.HTTP_201_CREATED)
+        
         if action in ['create', 'update']:
             if not all([assignment_id, day, start_time, end_time]):
                 return Response({'success': False, 'message': 'All fields required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -509,7 +613,7 @@ def manage_timetable(request):
                 )
                 create_notification(
                     recipient=assignment.faculty,
-                    message=f"Timetable added: {assignment.subject.name} on {day} from {start} to {end}."
+                    message=f"Timetable added: {assignment.subject.name} on {day} from {start} to {end} in {room}."
                 )
                 return Response({
                     'success': True,
@@ -524,7 +628,7 @@ def manage_timetable(request):
                 timetable.save()
                 create_notification(
                     recipient=assignment.faculty,
-                    message=f"Timetable updated: {assignment.subject.name} on {day} from {start} to {end}."
+                    message=f"Timetable updated: {assignment.subject.name} on {day} from {start} to {end} in {room}."
                 )
                 return Response({
                     'success': True,
@@ -545,7 +649,7 @@ def manage_timetable(request):
         return Response({'success': False, 'message': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
     except Branch.DoesNotExist:
         return Response({'success': False, 'message': 'Branch not assigned'}, status=status.HTTP_404_NOT_FOUND)
-    except (FacultyAssignment.DoesNotExist, Timetable.DoesNotExist):
+    except (FacultyAssignment.DoesNotExist, Timetable.DoesNotExist, Semester.DoesNotExist, Section.DoesNotExist, Subject.DoesNotExist):
         return Response({'success': False, 'message': 'Invalid reference'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.error("Error in manage_timetable: %s", str(e))
@@ -554,7 +658,7 @@ def manage_timetable(request):
 @api_view(['GET', 'POST'])
 @permission_classes([IsHOD])
 def manage_leaves(request):
-    """Manage faculty and HOD leaves."""
+    """Manage faculty leave requests (approve/reject only)."""
     if request.method == 'GET':
         try:
             hod = request.user
@@ -573,35 +677,14 @@ def manage_leaves(request):
         except Exception as e:
             logger.error("Error in get_leaves: %s", str(e))
             return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    action = request.data.get('action')  # 'create', 'approve', 'reject'
+    
+    action = request.data.get('action')  # 'approve', 'reject'
     leave_id = request.data.get('leave_id')
-    faculty_id = request.data.get('faculty_id')
-    start_date = request.data.get('start_date')
-    end_date = request.data.get('end_date')
-    reason = request.data.get('reason')
+    
     try:
         hod = request.user
         branch = Branch.objects.get(hod=hod)
-        if action == 'create':
-            if not all([faculty_id, start_date, end_date, reason]):
-                return Response({'success': False, 'message': 'All fields required'}, status=status.HTTP_400_BAD_REQUEST)
-            faculty = User.objects.get(id=faculty_id, role__in=['teacher', 'hod'])
-            start = timezone.datetime.strptime(start_date, '%Y-%m-%d').date()
-            end = timezone.datetime.strptime(end_date, '%Y-%m-%d').date()
-            if start > end:
-                return Response({'success': False, 'message': 'Invalid date range'}, status=status.HTTP_400_BAD_REQUEST)
-            leave = LeaveRequest.objects.create(
-                faculty=faculty, branch=branch, start_date=start, end_date=end, reason=reason.strip(), status='PENDING'
-            )
-            create_notification(
-                recipient=faculty,
-                message=f"Leave request submitted for {start} to {end} by HOD {hod.username}."
-            )
-            return Response({
-                'success': True,
-                'data': {'leave_id': str(leave.id)}
-            }, status=status.HTTP_201_CREATED)
-        elif action in ['approve', 'reject']:
+        if action in ['approve', 'reject']:
             if not leave_id:
                 return Response({'success': False, 'message': 'Leave ID required'}, status=status.HTTP_400_BAD_REQUEST)
             leave = LeaveRequest.objects.get(id=leave_id, branch=branch, status='PENDING')
@@ -894,28 +977,50 @@ def manage_profile(request):
                 'username': hod.username,
                 'email': hod.email,
                 'first_name': hod.first_name,
-                'last_name': hod.last_name
+                'last_name': hod.last_name,
+                'profile_picture': hod.profile_picture.url if hod.profile_picture else None
             }
             return Response({'success': True, 'data': data})
         except Exception as e:
             logger.error("Error in get_profile: %s", str(e))
             return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     email = request.data.get('email')
     first_name = request.data.get('first_name')
     last_name = request.data.get('last_name')
+    profile_picture = request.FILES.get('profile_picture')
+    
     try:
-        if not any([email, first_name, last_name]):
+        if not any([email, first_name, last_name, profile_picture]):
             return Response({'success': False, 'message': 'At least one field required'}, status=status.HTTP_400_BAD_REQUEST)
-        if email:
+        
+        if email and email != hod.email:
+            if User.objects.filter(email=email).exclude(id=hod.id).exists():
+                return Response({
+                    'success': False,
+                    'message': 'Email is already taken'
+                }, status=status.HTTP_400_BAD_REQUEST)
             hod.email = email.strip()
         if first_name:
             hod.first_name = first_name.strip()
         if last_name:
             hod.last_name = last_name.strip()
+        if profile_picture:
+            try:
+                FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])(profile_picture)
+                validate_image_size(profile_picture)
+                if hod.profile_picture:
+                    default_storage.delete(hod.profile_picture.path)
+                hod.profile_picture = profile_picture
+            except ValidationError as e:
+                return Response({'success': False, 'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        
         hod.save()
-        create_notification(
-            recipient=hod,
-            message="Your profile has been updated."
+        GenericNotification.objects.create(
+            title="Profile Updated",
+            message="Your profile has been updated.",
+            target_role='hod',
+            created_by=hod
         )
         return Response({
             'success': True,
@@ -923,7 +1028,8 @@ def manage_profile(request):
                 'username': hod.username,
                 'email': hod.email,
                 'first_name': hod.first_name,
-                'last_name': hod.last_name
+                'last_name': hod.last_name,
+                'profile_picture': hod.profile_picture.url if hod.profile_picture else None
             }
         })
     except Exception as e:

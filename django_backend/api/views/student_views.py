@@ -16,10 +16,64 @@ from ..models import (
 from rest_framework import status, views
 import logging
 import os
+import numpy as np
+import cv2
+import logging
+from django.core.exceptions import ValidationError
+from django.core.validators import FileExtensionValidator
+from .utils import validate_image_size
 
 logger = logging.getLogger(__name__)
 
-# 1. Login View
+# 1. Check Auth
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def check_auth(request):
+    try:
+        user = request.user
+        profile_image = None
+        department = None
+
+        if user.role == 'student' and hasattr(user, 'student_profile'):
+            profile_image = user.student_profile.profile_picture.url if user.student_profile.profile_picture else None
+            department = user.student_profile.branch.name if user.student_profile.branch else None
+        elif user.role == 'faculty' and hasattr(user, 'faculty_profile'):
+            profile_image = user.faculty_profile.profile_picture.url if user.faculty_profile.profile_picture else None
+            department = user.faculty_profile.department if user.faculty_profile.department else None
+        elif user.role == 'hod' and hasattr(user, 'hod_profile'):
+            profile_image = user.hod_profile.profile_picture.url if user.hod_profile.profile_picture else None
+            department = user.hod_profile.department if user.hod_profile.department else None
+        elif user.role == 'admin':
+            department = 'Administration'
+
+        return Response({
+            'success': True,
+            'user_id': user.id,
+            'username': user.username,  # Changed from user.name
+            'email': user.email,
+            'role': user.role,
+            'department': department,
+            'profile_image': profile_image
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error("Check auth error: %s", str(e))
+        return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# 2. Logout
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    try:
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        return Response({'success': True, 'message': 'Logged out'}, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error("Logout error: %s", str(e))
+        return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# 3. Login View
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
@@ -29,23 +83,51 @@ def login_view(request):
         return Response({'success': False, 'message': 'Username and password required'}, status=status.HTTP_400_BAD_REQUEST)
     try:
         user = User.objects.get(username=username)
-        if user.check_password(password) and user.role == 'student':
+        if not user.check_password(password):
+            return Response({'success': False, 'message': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        if user.role == 'student':
+            logger.info(f"Sending OTP to {user.email}")
             otp_device, _ = EmailDevice.objects.get_or_create(user=user, email=user.email, defaults={'name': 'default'})
             otp_device.generate_challenge()
+            logger.info("OTP sent successfully")
             Notification.objects.create(
                 student=user.student_profile,
                 title="Login OTP Sent",
                 message="An OTP has been sent to your email for login verification."
             )
             return Response({'success': True, 'message': 'OTP sent', 'user_id': user.id}, status=status.HTTP_200_OK)
-        return Response({'success': False, 'message': 'Invalid credentials or role'}, status=status.HTTP_401_UNAUTHORIZED)
+        else:
+            refresh = RefreshToken.for_user(user)
+            profile_data = {
+                'user_id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role
+            }
+            if user.role == 'admin':
+                profile_data['department'] = 'Administration'
+            elif user.role == 'hod':
+                profile_data['department'] = user.hod_profile.department if hasattr(user, 'hod_profile') else None
+                profile_data['profile_image'] = user.hod_profile.profile_picture.url if hasattr(user, 'hod_profile') and user.hod_profile.profile_picture else None
+            elif user.role == 'faculty':
+                profile_data['department'] = user.faculty_profile.department if hasattr(user, 'faculty_profile') else None
+                profile_data['profile_image'] = user.faculty_profile.profile_picture.url if hasattr(user, 'faculty_profile') and user.faculty_profile.profile_picture else None
+            
+            return Response({
+                'success': True,
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'role': user.role,
+                'profile': profile_data
+            }, status=status.HTTP_200_OK)
     except User.DoesNotExist:
         return Response({'success': False, 'message': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.error("Login error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 2. Verify OTP
+# 4. Verify OTP
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def verify_otp(request):
@@ -54,24 +136,34 @@ def verify_otp(request):
     if not all([user_id, otp]):
         return Response({'success': False, 'message': 'User ID and OTP required'}, status=status.HTTP_400_BAD_REQUEST)
     try:
-        user = User.objects.get(id=user_id, role='student')
+        user = User.objects.get(id=user_id)
         otp_device = EmailDevice.objects.get(user=user, email=user.email)
         if otp_device.verify_token(otp):
             refresh = RefreshToken.for_user(user)
-            student = Student.objects.get(user=user)
-            Notification.objects.create(
-                student=student,
-                title="Login Successful",
-                message="You have successfully logged in."
-            )
+            profile_data = {
+                'user_id': user.id,
+                'username': user.username,  # Changed from user.name
+                'email': user.email,
+                'role': user.role
+            }
+            if user.role == 'student':
+                student = Student.objects.get(user=user)
+                profile_data.update({
+                    'branch': student.branch.name,
+                    'semester': student.semester.number,
+                    'section': student.section.name
+                })
+                Notification.objects.create(
+                    student=student,
+                    title="Login Successful",
+                    message="You have successfully logged in."
+                )
             return Response({
                 'success': True,
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
                 'role': user.role,
-                'branch': student.branch.name,
-                'semester': student.semester.number,
-                'section': student.section.name
+                'profile': profile_data
             }, status=status.HTTP_200_OK)
         return Response({'success': False, 'message': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
     except (User.DoesNotExist, EmailDevice.DoesNotExist):
@@ -80,7 +172,7 @@ def verify_otp(request):
         logger.error("OTP verification error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 3. Resend OTP
+# 5. Resend OTP
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def resend_otp(request):
@@ -88,14 +180,15 @@ def resend_otp(request):
     if not user_id:
         return Response({'success': False, 'message': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
     try:
-        user = User.objects.get(id=user_id, role='student')
+        user = User.objects.get(id=user_id)
         otp_device = EmailDevice.objects.get(user=user, email=user.email)
         otp_device.generate_challenge()
-        Notification.objects.create(
-            student=user.student_profile,
-            title="OTP Resent",
-            message="A new OTP has been sent to your email."
-        )
+        if user.role == 'student':
+            Notification.objects.create(
+                student=user.student_profile,
+                title="OTP Resent",
+                message="A new OTP has been sent to your email."
+            )
         return Response({'success': True, 'message': 'OTP resent'}, status=status.HTTP_200_OK)
     except (User.DoesNotExist, EmailDevice.DoesNotExist):
         return Response({'success': False, 'message': 'Invalid user or OTP'}, status=status.HTTP_404_NOT_FOUND)
@@ -103,7 +196,7 @@ def resend_otp(request):
         logger.error("Resend OTP error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 4. Forgot Password
+# 6. Forgot Password
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def forgot_password(request):
@@ -111,42 +204,47 @@ def forgot_password(request):
     if not email:
         return Response({'success': False, 'message': 'Email required'}, status=status.HTTP_400_BAD_REQUEST)
     try:
-        user = User.objects.get(email=email, role='student')
+        user = User.objects.get(email=email)
         otp_device, _ = EmailDevice.objects.get_or_create(user=user, email=user.email, defaults={'name': 'default'})
         otp_device.generate_challenge()
-        Notification.objects.create(
-            student=user.student_profile,
-            title="Password Reset OTP",
-            message="An OTP has been sent to reset your password."
-        )
+        if user.role == 'student':
+            Notification.objects.create(
+                student=user.student_profile,
+                title="Password Reset OTP",
+                message="An OTP has been sent to reset your password."
+            )
         return Response({'success': True, 'message': 'OTP sent', 'user_id': user.id}, status=status.HTTP_200_OK)
     except User.DoesNotExist:
-        return Response({'success': False, 'message': 'No student found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': False, 'message': 'No user found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.error("Forgot password error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 5. Reset Password
+# 7. Reset Password
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def reset_password(request):
     user_id = request.data.get('user_id')
     otp = request.data.get('otp')
     new_password = request.data.get('new_password')
-    if not all([user_id, otp, new_password]):
+    confirm_password = request.data.get('confirm_password')
+    if not all([user_id, otp, new_password, confirm_password]):
         return Response({'success': False, 'message': 'All fields required'}, status=status.HTTP_400_BAD_REQUEST)
+    if new_password != confirm_password:
+        return Response({'success': False, 'message': 'Passwords do not match'}, status=status.HTTP_400_BAD_REQUEST)
     try:
-        user = User.objects.get(id=user_id, role='student')
+        user = User.objects.get(id=user_id)
         otp_device = EmailDevice.objects.get(user=user, email=user.email)
         if otp_device.verify_token(otp):
             user.password = make_password(new_password)
             user.save()
-            Notification.objects.create(
-                student=user.student_profile,
-                title="Password Reset",
-                message="Your password has been successfully reset."
-            )
-            return Response({'success': True, 'message': 'Password reset'}, status=status.HTTP_200_OK)
+            if user.role == 'student':
+                Notification.objects.create(
+                    student=user.student_profile,
+                    title="Password Reset",
+                    message="Your password has been successfully reset."
+                )
+            return Response({'success': True, 'message': 'Password reset, please login'}, status=status.HTTP_200_OK)
         return Response({'success': False, 'message': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
     except (User.DoesNotExist, EmailDevice.DoesNotExist):
         return Response({'success': False, 'message': 'Invalid user or OTP'}, status=status.HTTP_404_NOT_FOUND)
@@ -154,7 +252,7 @@ def reset_password(request):
         logger.error("Reset password error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 6. Dashboard Overview
+# 8. Dashboard Overview
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def dashboard_overview(request):
@@ -201,7 +299,7 @@ def dashboard_overview(request):
         logger.error("Dashboard error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 7. Get Timetable
+# 9. Get Timetable
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_timetable(request):
@@ -231,7 +329,7 @@ def get_timetable(request):
         logger.error("Timetable error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 8. Get Student Attendance
+# 10. Get Student Attendance
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_student_attendance(request):
@@ -269,7 +367,7 @@ def get_student_attendance(request):
         logger.error("Attendance error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 9. Get Internal Marks
+# 11. Get Internal Marks
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_internal_marks(request):
@@ -296,7 +394,7 @@ def get_internal_marks(request):
         logger.error("Marks error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 10. Submit Leave Request
+# 12. Submit Leave Request
 @api_view(['POST'])
 @permission_classes([IsStudent])
 def submit_student_leave_request(request):
@@ -338,7 +436,7 @@ def submit_student_leave_request(request):
         logger.error("Leave request error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 11. Get Leave Requests
+# 13. Get Leave Requests
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_student_leave_requests(request):
@@ -364,7 +462,7 @@ def get_student_leave_requests(request):
         logger.error("Get leaves error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 12. Upload Certificate
+# 14. Upload Certificate
 @api_view(['POST'])
 @permission_classes([IsStudent])
 def upload_certificate(request):
@@ -394,7 +492,7 @@ def upload_certificate(request):
         logger.error("Certificate upload error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 13. Get Certificates
+# 15. Get Certificates
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_certificates(request):
@@ -419,7 +517,7 @@ def get_certificates(request):
         logger.error("Get certificates error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 14. Delete Certificate
+# 16. Delete Certificate
 @api_view(['DELETE'])
 @permission_classes([IsStudent])
 def delete_certificate(request):
@@ -444,44 +542,85 @@ def delete_certificate(request):
         logger.error("Delete certificate error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 15. Update Profile
+# 17. Update Profile
 @api_view(['POST'])
 @permission_classes([IsStudent])
 def update_profile(request):
     email = request.data.get('email')
+    first_name = request.data.get('first_name')
+    last_name = request.data.get('last_name')
     profile_picture = request.FILES.get('profile_picture')
+    
     try:
         student = Student.objects.get(user=request.user)
         user = student.user
+
+        if not any([email, first_name, last_name, profile_picture]):
+            return Response({
+                'success': False,
+                'message': 'At least one field required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         if email and email != user.email:
             if User.objects.filter(email=email).exclude(id=user.id).exists():
-                return Response({'success': False, 'message': 'Email taken'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    'success': False,
+                    'message': 'Email is already taken'
+                }, status=status.HTTP_400_BAD_REQUEST)
             user.email = email
+
+        if first_name:
+            user.first_name = first_name.strip()
+        if last_name:
+            user.last_name = last_name.strip()
+
         if profile_picture:
-            if student.profile_picture:
-                os.remove(student.profile_picture.path)
-            student.profile_picture = profile_picture
+            try:
+                # Validate file extension and size
+                FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])(profile_picture)
+                validate_image_size(profile_picture)
+                if user.profile_picture:
+                    if os.path.exists(user.profile_picture.path):
+                        os.remove(user.profile_picture.path)
+                user.profile_picture = profile_picture
+            except ValidationError as e:
+                return Response({
+                    'success': False,
+                    'message': str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
+
         user.save()
-        student.save()
-        Notification.objects.create(
-            student=student,
+
+        GenericNotification.objects.create(
             title="Profile Updated",
-            message="Your profile has been updated."
+            message="Your profile has been updated.",
+            target_role='student',
+            created_by=user
         )
+
         return Response({
             'success': True,
             'data': {
                 'email': user.email,
-                'profile_picture': student.profile_picture.url if student.profile_picture else None
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'profile_picture': user.profile_picture.url if user.profile_picture else None
             }
         }, status=status.HTTP_200_OK)
+
     except Student.DoesNotExist:
-        return Response({'success': False, 'message': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'success': False,
+            'message': 'Student not found'
+        }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.error("Profile update error: %s", str(e))
-        return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            'success': False,
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 16. Get Announcements
+# 18. Get Announcements
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_announcements(request):
@@ -508,29 +647,8 @@ def get_announcements(request):
         logger.error("Announcements error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 17. Download Study Materials
-@api_view(['GET'])
-@permission_classes([IsStudent])
-def download_study_materials(request):
-    subject_id = request.query_params.get('subject_id')
-    if not subject_id:
-        return Response({'success': False, 'message': 'Subject ID required'}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        student = Student.objects.get(user=request.user)
-        subject = Subject.objects.get(id=subject_id, branch=student.branch, semester=student.semester)
-        # Placeholder: Assumes resources are stored elsewhere or linked to Subject
-        data = [{'title': f"Material for {subject.name}", 'url': "#"}]  # Replace with actual storage
-        return Response({
-            'success': True,
-            'data': data
-        }, status=status.HTTP_200_OK)
-    except (Student.DoesNotExist, Subject.DoesNotExist):
-        return Response({'success': False, 'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        logger.error("Study materials error: %s", str(e))
-        return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 18. Manage Chat
+# 20. Manage Chat
 @api_view(['GET', 'POST'])
 @permission_classes([IsStudent])
 def manage_chat(request):
@@ -577,7 +695,7 @@ def manage_chat(request):
         logger.error("Chat error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 19. Get Notifications
+# 21. Get Notifications
 @api_view(['GET'])
 @permission_classes([IsStudent])
 def get_notifications(request):
@@ -604,7 +722,7 @@ def get_notifications(request):
         logger.error("Notifications error: %s", str(e))
         return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# 20. Weekly Schedule
+# 22. Weekly Schedule
 class WeeklyScheduleView(views.APIView):
     permission_classes = [IsStudent]
     def get(self, request):
@@ -631,3 +749,86 @@ class WeeklyScheduleView(views.APIView):
         except Exception as e:
             logger.error("Weekly schedule error: %s", str(e))
             return Response({'success': False, 'message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+@api_view(['POST'])
+@permission_classes([IsStudent])
+def upload_face_encodings(request):
+    """Upload and validate face images for encoding."""
+    files = request.FILES.getlist('images')
+    if len(files) < 3:
+        return Response({
+            'success': False,
+            'message': 'At least 3 images required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        student = Student.objects.get(user=request.user)
+        encodings = []
+        
+        for file in files:
+            img_bytes = file.read()
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Validate single face and quality using DLib
+            from .utils import face_detector, shape_predictor, face_recognizer
+            if not face_detector:
+                return Response({
+                    'success': False,
+                    'message': 'Face recognition system unavailable'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            faces = face_detector(gray)
+            if len(faces) != 1:
+                return Response({
+                    'success': False,
+                    'message': f'Image {file.name} must contain exactly one face'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check lighting (basic brightness check)
+            if np.mean(gray) < 50:
+                return Response({
+                    'success': False,
+                    'message': f'Image {file.name} is too dark'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Extract encoding
+            shape = shape_predictor(img, faces[0])
+            encoding = np.array(face_recognizer.compute_face_descriptor(img, shape))
+            encodings.append(encoding)
+        
+        # Verify consistency across encodings
+        from .utils import compute_face_distance
+        for i in range(len(encodings)):
+            for j in range(i + 1, len(encodings)):
+                distance = compute_face_distance(encodings[i], encodings[j])
+                if distance > 0.4:
+                    return Response({
+                        'success': False,
+                        'message': 'Images do not depict the same person'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Store encodings
+        student.set_face_encodings(encodings)
+        
+        # Notify student
+        Notification.objects.create(
+            title="Face Encoding Registered",
+            message="Your face encodings have been successfully uploaded",
+            target_role='student',
+            created_by=request.user
+        )
+        
+        logger.info("Face encodings uploaded for student %s", student.usn)
+        return Response({
+            'success': True,
+            'message': 'Face encodings registered successfully'
+        }, status=status.HTTP_201_CREATED)
+    
+    except Exception as e:
+        logger.error("Error uploading face encodings: %s", str(e))
+        return Response({
+            'success': False,
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

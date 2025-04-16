@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import logging
+from django.core.exceptions import ValidationError
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -174,8 +175,9 @@ def calculate_statistics(attendance_records: List[Dict]) -> Dict[str, Tuple[int,
     for session in attendance_records:
         for student in session["present"]:
             attendance[student] = attendance.get(student, 0) + 1
-        for student in session["absent"]:
-            attendance.setdefault(student, 0)
+        for session in attendance_records:
+            for student in session["absent"]:
+                attendance.setdefault(student, 0)
     stats = {student: (count, (count / total_sessions) * 100) for student, count in attendance.items()}
     logger.info("Calculated attendance statistics for %d students over %d sessions", len(stats), total_sessions)
     return stats
@@ -217,3 +219,8 @@ def generate_pdf(stats: Dict[str, Tuple[int, float]], output_file: str, record) 
     except Exception as e:
         logger.error("Error generating PDF at %s: %s", output_file, str(e))
         raise
+
+def validate_image_size(value):
+    max_size = 5 * 1024 * 1024  # 5MB
+    if value.size > max_size:
+        raise ValidationError('Image size should not exceed 5MB.')

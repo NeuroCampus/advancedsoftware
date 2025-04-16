@@ -1,0 +1,465 @@
+```yaml
+openapi: 3.0.3
+info:
+  title: Academic Management System API
+  description: |
+    The Academic Management System API provides endpoints for managing academic operations, including user management, attendance, marks, timetables, and communication for admin, HOD, faculty, and students.
+  version: 1.0.0
+  contact:
+    email: support@x.ai
+servers:
+  - url: https://api.academic-system.com/v1
+    description: Production server
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: An error occurred
+    User:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          type: string
+          enum: [admin, hod, teacher, student]
+    Notification:
+      type: object
+      properties:
+        title:
+          type: string
+        message:
+          type: string
+        target_role:
+          type: string
+          enum: [admin, hod, teacher, student, all]
+        created_at:
+          type: string
+          format: date-time
+    AttendanceRecord:
+      type: object
+      properties:
+        branch_id:
+          type: string
+        semester_id:
+          type: string
+        section_id:
+          type: string
+        subject_id:
+          type: string
+        date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [completed, pending]
+    InternalMark:
+      type: object
+      properties:
+        student_id:
+          type: string
+        subject_id:
+          type: string
+        test_number:
+          type: integer
+        mark:
+          type: integer
+    LeaveRequest:
+      type: object
+      properties:
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+
+paths:
+  /admin/stats:
+    get:
+      summary: Retrieve admin dashboard statistics
+      operationId: getAdminStats
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      total_students:
+                        type: integer
+                      total_faculty:
+                        type: integer
+                      total_hods:
+                        type: integer
+                      branch_distribution:
+                        type: array
+                        items:
+                          type: object
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Returns stats like total users and branch-wise distribution.
+
+  /admin/enroll:
+    post:
+      summary: Enroll HOD or teacher
+      operationId: enrollUser
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+                role:
+                  type: string
+                  enum: [hod, teacher]
+      responses:
+        '201':
+          description: User enrolled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Creates a new HOD or teacher account with default password.
+
+  /student/login:
+    post:
+      summary: Student login with OTP
+      operationId: studentLogin
+      tags: [Student]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: OTP sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Initiates login by sending OTP to student's email.
+
+  /student/verify-otp:
+    post:
+      summary: Verify OTP for login
+      operationId: verifyStudentOTP
+      tags: [Student]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                otp:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  token:
+                    type: string
+        '400':
+          description: Invalid OTP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Validates OTP and issues JWT token.
+
+  /hod/dashboard:
+    get:
+      summary: HOD dashboard statistics
+      operationId: getHODStats
+      tags: [HOD]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      faculty_count:
+                        type: integer
+                      student_count:
+                        type: integer
+                      pending_leaves:
+                        type: integer
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Returns branch-specific stats for HOD.
+
+  /hod/students:
+    post:
+      summary: Manage students
+      operationId: manageStudents
+      tags: [HOD]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                students:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      usn:
+                        type: string
+                      email:
+                        type: string
+                        format: email
+      responses:
+        '201':
+          description: Students created/updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Creates or updates student records.
+
+  /faculty/attendance:
+    post:
+      summary: Take attendance
+      operationId: takeAttendance
+      tags: [Faculty]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                subject_id:
+                  type: string
+                section_id:
+                  type: string
+                semester_id:
+                  type: string
+                method:
+                  type: string
+                  enum: [manual, ai]
+                class_images:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                attendance:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      student_id:
+                        type: string
+                      status:
+                        type: boolean
+      responses:
+        '200':
+          description: Attendance recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Records attendance manually or via AI facial recognition.
+
+  /faculty/marks:
+    post:
+      summary: Upload internal marks
+      operationId: uploadMarks
+      tags: [Faculty]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                semester_id:
+                  type: string
+                section_id:
+                  type: string
+                subject_id:
+                  type: string
+                test_number:
+                  type: integer
+                marks:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      student_id:
+                        type: string
+                      mark:
+                        type: integer
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Marks uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Uploads internal marks via JSON or file.
+
+tags:
+  - name: Admin
+    description: Endpoints for admin users to manage system-wide settings and users.
+  - name: Student
+    description: Endpoints for student-specific functionalities like attendance and marks.
+  - name: HOD
+    description: Endpoints for HOD to manage department-level operations.
+  - name: Faculty
+    description: Endpoints for faculty to handle teaching and mentoring tasks.
+```
