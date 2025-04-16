@@ -13,25 +13,22 @@ import logging
 # Set up logging
 logger = logging.getLogger(__name__)
 
-
 class CertificateInline(admin.TabularInline):
     model = Certificate
     extra = 1
     fields = ('title', 'file', 'uploaded_at')
     readonly_fields = ('uploaded_at',)
 
-
 class UserChoiceField(forms.ModelChoiceField):
     """Custom field to ensure User dropdowns show only first_name and role."""
     def label_from_instance(self, obj):
         return str(obj)  # Explicitly use User.__str__
 
-
 class StudentInline(admin.StackedInline):
     model = Student
     can_delete = False
     fk_name = 'user'
-    fields = ('name', 'usn', 'branch', 'semester', 'section', 'proctor', 'profile_picture')
+    fields = ('name', 'usn', 'branch', 'semester', 'section', 'proctor')  # Removed profile_picture
     autocomplete_fields = ('semester', 'section', 'branch', 'user')
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
@@ -44,7 +41,6 @@ class StudentInline(admin.StackedInline):
             kwargs['form_class'] = UserChoiceField
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     inlines = [StudentInline]
@@ -54,11 +50,11 @@ class UserAdmin(BaseUserAdmin):
     ordering = ('username',)
     
     add_fieldsets = (
-        (None, {'fields': ('username', 'email', 'role', 'first_name', 'last_name', 'password1', 'password2')}),
+        (None, {'fields': ('username', 'email', 'role', 'first_name', 'last_name', 'password1', 'password2', 'profile_picture')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
     )
     fieldsets = (
-        (None, {'fields': ('username', 'email', 'password', 'first_name', 'last_name')}),
+        (None, {'fields': ('username', 'email', 'password', 'first_name', 'last_name', 'profile_picture')}),
         ('Personal Info', {'fields': ('role',)}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
     )
@@ -70,7 +66,6 @@ class UserAdmin(BaseUserAdmin):
         default_password = 'newpassword123'
         updated = queryset.update(password=make_password(default_password))
         self.message_user(request, f"Reset passwords for {updated} users to '{default_password}'.")
-
 
 @admin.register(Branch)
 class BranchAdmin(admin.ModelAdmin):
@@ -85,7 +80,6 @@ class BranchAdmin(admin.ModelAdmin):
             logger.debug(f"HOD queryset: {[str(u) for u in kwargs['queryset']]}")
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-
 @admin.register(Semester)
 class SemesterAdmin(admin.ModelAdmin):
     list_display = ('number', 'branch')
@@ -98,7 +92,6 @@ class SemesterAdmin(admin.ModelAdmin):
             kwargs['choices'] = [(i, str(i)) for i in range(1, 9)]
         return super().formfield_for_choice_field(db_field, request, **kwargs)
 
-
 @admin.register(Section)
 class SectionAdmin(admin.ModelAdmin):
     list_display = ('name', 'semester', 'branch')
@@ -106,7 +99,6 @@ class SectionAdmin(admin.ModelAdmin):
     search_fields = ('branch__name', 'name')
     ordering = ('branch', 'semester__number', 'name')
     autocomplete_fields = ('semester', 'branch')
-
 
 @admin.register(Subject)
 class SubjectAdmin(admin.ModelAdmin):
@@ -116,13 +108,12 @@ class SubjectAdmin(admin.ModelAdmin):
     ordering = ('branch', 'semester__number', 'name')
     autocomplete_fields = ('branch', 'semester')
 
-
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = ('name', 'usn', 'branch', 'semester', 'section', 'proctor', 'user', 'has_face_encoding', 'last_modified')
     list_filter = ('branch', 'semester__number', 'section__name', 'last_modified')
     search_fields = ('name', 'usn', 'user__username', 'user__email', 'user__first_name', 'user__last_name')
-    fields = ('name', 'usn', 'branch', 'semester', 'section', 'proctor', 'user', 'profile_picture', 'last_modified')
+    fields = ('name', 'usn', 'branch', 'semester', 'section', 'proctor', 'user', 'last_modified')  # Removed profile_picture
     readonly_fields = ('last_modified',)
     autocomplete_fields = ('user', 'branch', 'semester', 'section')
     inlines = [CertificateInline]
@@ -160,14 +151,12 @@ class StudentAdmin(admin.ModelAdmin):
             kwargs['form_class'] = UserChoiceField
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-
 @admin.register(Certificate)
 class CertificateAdmin(admin.ModelAdmin):
     list_display = ('title', 'student', 'uploaded_at')
     list_filter = ('student__branch', 'uploaded_at')
     search_fields = ('title', 'student__name')
     autocomplete_fields = ('student',)
-
 
 @admin.register(FacultyAssignment)
 class FacultyAssignmentAdmin(admin.ModelAdmin):
@@ -183,14 +172,12 @@ class FacultyAssignmentAdmin(admin.ModelAdmin):
             logger.debug(f"Faculty queryset: {[str(u) for u in kwargs['queryset']]}")
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-
 @admin.register(Timetable)
 class TimetableAdmin(admin.ModelAdmin):
     list_display = ('faculty_assignment', 'day', 'start_time', 'end_time', 'room')
     list_filter = ('day', 'faculty_assignment__branch', 'faculty_assignment__semester__number')
     search_fields = ('faculty_assignment__subject__name', 'room')
     autocomplete_fields = ('faculty_assignment',)
-
 
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(admin.ModelAdmin):
@@ -205,7 +192,6 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
             kwargs['form_class'] = UserChoiceField
             logger.debug(f"Attendance faculty queryset: {[str(u) for u in kwargs['queryset']]}")
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
-
 
 @admin.register(AttendanceDetail)
 class AttendanceDetailAdmin(admin.ModelAdmin):
@@ -223,7 +209,6 @@ class AttendanceDetailAdmin(admin.ModelAdmin):
     def mark_absent(self, request, queryset):
         updated = queryset.update(status=False)
         self.message_user(request, f"Marked {updated} attendance records as Absent.")
-
 
 @admin.register(LeaveRequest)
 class LeaveRequestAdmin(admin.ModelAdmin):
@@ -266,7 +251,6 @@ class LeaveRequestAdmin(admin.ModelAdmin):
             return qs.filter(branch__hod=request.user, status='PENDING')
         return qs
 
-
 @admin.register(StudentLeaveRequest)
 class StudentLeaveRequestAdmin(admin.ModelAdmin):
     list_display = ('student', 'start_date', 'end_date', 'status', 'submitted_at', 'reviewed_by')
@@ -307,7 +291,6 @@ class StudentLeaveRequestAdmin(admin.ModelAdmin):
             return qs.filter(student__student_profile__proctor=request.user, status='PENDING')
         return qs
 
-
 @admin.register(InternalMark)
 class InternalMarkAdmin(admin.ModelAdmin):
     list_display = ('student', 'subject', 'test_number', 'mark', 'max_mark', 'recorded_at')
@@ -321,7 +304,6 @@ class InternalMarkAdmin(admin.ModelAdmin):
             kwargs['form_class'] = UserChoiceField
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-
 @admin.register(Announcement)
 class AnnouncementAdmin(admin.ModelAdmin):
     list_display = ('title', 'branch', 'target', 'created_at', 'created_by')
@@ -334,7 +316,6 @@ class AnnouncementAdmin(admin.ModelAdmin):
             kwargs['queryset'] = User.objects.filter(role__in=['teacher', 'hod']).order_by('first_name')
             kwargs['form_class'] = UserChoiceField
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
-
 
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):

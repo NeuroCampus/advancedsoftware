@@ -33,6 +33,15 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=50, blank=False, null=False)
     last_name = models.CharField(max_length=50, blank=True, null=True)
+    profile_picture = models.ImageField(
+        upload_to='user_profiles/',
+        null=True,
+        blank=True,
+        validators=[
+            FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png']),
+            validate_image_size
+        ]
+    )
 
     groups = models.ManyToManyField(
         'auth.Group',
@@ -53,6 +62,7 @@ class User(AbstractUser):
     def clean(self):
         if not self.first_name.strip():
             raise ValidationError("First name cannot be empty.")
+
 
 
 class Branch(models.Model):
@@ -100,23 +110,30 @@ class Section(models.Model):
 
 class Subject(models.Model):
     name = models.CharField(max_length=100)
-    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='subjects')
-    semester = models.ForeignKey(Semester, on_delete=models.CASCADE, related_name='subjects')
+    subject_code = models.CharField(max_length=20, blank=True, null=True)
+    branch = models.ForeignKey('Branch', on_delete=models.CASCADE, related_name='subjects')
+    semester = models.ForeignKey('Semester', on_delete=models.CASCADE, related_name='subjects')
 
     class Meta:
-        unique_together = ('branch', 'semester', 'name')
-        indexes = [models.Index(fields=['branch', 'semester'])]
+        unique_together = [
+            ('branch', 'semester', 'name'),
+            ('branch', 'subject_code'),
+        ]
+        indexes = [
+            models.Index(fields=['branch', 'semester']),
+            models.Index(fields=['branch', 'subject_code']),
+        ]
 
     def __str__(self):
-        return f"{self.name} - {self.branch.name} (Sem {self.semester.number})"
+        return f"{self.name} ({self.subject_code}) - {self.branch.name} (Sem {self.semester.number})"
 
 
 class Student(models.Model):
     name = models.CharField(max_length=100)
     usn = models.CharField(max_length=50, unique=True)
-    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, related_name='students')
-    semester = models.ForeignKey(Semester, on_delete=models.CASCADE, related_name='students')
-    section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name='students')
+    branch = models.ForeignKey('Branch', on_delete=models.CASCADE, related_name='students')
+    semester = models.ForeignKey('Semester', on_delete=models.CASCADE, related_name='students')
+    section = models.ForeignKey('Section', on_delete=models.CASCADE, related_name='students')
     user = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
@@ -132,34 +149,23 @@ class Student(models.Model):
         limit_choices_to={'role': 'teacher'}
     )
     last_modified = models.DateTimeField(auto_now=True)
-    face_encoding = models.JSONField(null=True, blank=True)
-    profile_picture = models.ImageField(
-        upload_to='student_profiles/',
-        null=True,
-        blank=True,
-        validators=[
-            FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png']),
-            validate_image_size
-        ]
-    )
+    face_encodings = models.JSONField(null=True, blank=True)
 
-    def set_face_encoding(self, encoding):
-        """Store face encoding as JSON."""
-        if not isinstance(encoding, np.ndarray):
-            raise ValidationError("Encoding must be a NumPy array")
-        if encoding.size != 128:
-            raise ValidationError("Encoding must be a 128-dimensional array")
-        self.face_encoding = json.dumps(encoding.tolist())
+    def set_face_encodings(self, encodings):
+        if not isinstance(encodings, list) or not all(isinstance(enc, np.ndarray) for enc in encodings):
+            raise ValidationError("Encodings must be a list of NumPy arrays")
+        if any(enc.size != 128 for enc in encodings):
+            raise ValidationError("Each encoding must be a 128-dimensional array")
+        self.face_encodings = json.dumps([enc.tolist() for enc in encodings])
         self.save()
 
-    def get_face_encoding(self):
-        """Convert JSON back to NumPy array."""
-        if self.face_encoding:
+    def get_face_encodings(self):
+        if self.face_encodings:
             try:
-                return np.array(json.loads(self.face_encoding), dtype=np.float64)
+                return [np.array(enc, dtype=np.float64) for enc in json.loads(self.face_encodings)]
             except ValueError as e:
-                raise ValidationError(f"Invalid face encoding data: {str(e)}")
-        return None
+                raise ValidationError(f"Invalid face encodings data: {str(e)}")
+        return []
 
     def __str__(self):
         return f"{self.name} ({self.usn}) - {self.branch.name}"
@@ -175,14 +181,6 @@ class Student(models.Model):
             raise ValidationError(f"Section {self.section.name} does not match branch {self.branch.name} or semester {self.semester.number}.")
 
     def save(self, *args, **kwargs):
-        if self.pk:
-            try:
-                old_student = Student.objects.get(pk=self.pk)
-                if old_student.profile_picture and self.profile_picture != old_student.profile_picture:
-                    if os.path.exists(old_student.profile_picture.path):
-                        os.remove(old_student.profile_picture.path)
-            except Student.DoesNotExist:
-                pass
         super().save(*args, **kwargs)
 
 

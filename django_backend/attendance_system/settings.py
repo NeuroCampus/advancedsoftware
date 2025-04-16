@@ -7,12 +7,12 @@ from decouple import config
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Security settings
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here')  # Ensure a strong key in production
-DEBUG = config('DEBUG', default=True, cast=bool)  # Set to False in production
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here')
+DEBUG = config('DEBUG', default=True, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
 
 # Custom User Model
-AUTH_USER_MODEL = 'api.User'  # Supports roles: admin, hod, teacher, student
+AUTH_USER_MODEL = 'api.User'
 
 # Installed apps
 INSTALLED_APPS = [
@@ -24,22 +24,22 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
-    'rest_framework_simplejwt.token_blacklist',  # Token blacklist for security
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'django_otp',
-    'django_otp.plugins.otp_email',  # OTP for student authentication
-    'django_otp.plugins.otp_totp',  # Support for authenticator apps
-    'api', 
+    'django_otp.plugins.otp_email',
+    'django_otp.plugins.otp_totp',
+    'api',
 ]
 
 # Middleware
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',  # Enable CORS for frontend
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django_otp.middleware.OTPMiddleware',  # OTP before authentication
+    'django_otp.middleware.OTPMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -59,7 +59,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PARSER_CLASSES': (
         'rest_framework.parsers.JSONParser',
         'rest_framework.parsers.FormParser',
-        'rest_framework.parsers.MultiPartParser',  # For file uploads (e.g., student photos)
+        'rest_framework.parsers.MultiPartParser',
     ),
 }
 
@@ -81,7 +81,7 @@ ROOT_URLCONF = 'attendance_system.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [os.path.join(BASE_DIR, 'templates')],  # For email templates
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -119,7 +119,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'Asia/Kolkata'  # Matches project timezone requirements
+TIME_ZONE = 'Asia/Kolkata'
 USE_I18N = True
 USE_TZ = True
 
@@ -136,12 +136,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173', cast=lambda v: [s.strip() for s in v.split(',')])  # Vite default port
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_METHODS = ['GET', 'POST', 'OPTIONS']
+CORS_ALLOW_METHODS = ['GET', 'POST', 'OPTIONS' ]
 CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization']
 
 # Custom settings for attendance system
-STUDENT_DATA_PATH = os.path.join(BASE_DIR, 'student_data')  # For Google Sheets sheet ID files
-GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')  # For Google API integration
+STUDENT_DATA_PATH = os.path.join(BASE_DIR, 'student_data')
+GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')
 os.makedirs(STUDENT_DATA_PATH, exist_ok=True)
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 
@@ -185,4 +185,4 @@ LOGGING = {
         },
     },
 }
-os.makedirs(os.path.join(BASE_DIR, 'logs'), exist_ok=True)  # Ensure logs directory exists
+os.makedirs(os.path.join(BASE_DIR, 'logs'), exist_ok=True)

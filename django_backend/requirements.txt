@@ -16,3 +16,5 @@ pyotp==2.9.0  # OTP generation and verification
 django-email-utils==1.0.0  # Email utilities (optional, can use Django's built-in email)
 pandas==2.2.2
 openpyxl==3.1.5
+gunicorn==22.0.0  # WSGI server for production
+psycopg2-binary==2.9.9  # PostgreSQL database adapter
