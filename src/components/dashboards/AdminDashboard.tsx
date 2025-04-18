@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import Sidebar from "../common/Sidebar";
 import AdminStats from "../admin/AdminStats";
@@ -44,9 +43,12 @@ const AdminDashboard = ({ user, setPage }: AdminDashboardProps) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="flex min-h-screen bg-gray-100">
+      {/* Sidebar */}
       <Sidebar role="admin" setPage={handlePageChange} activePage={activePage} />
-      <div className="flex-1 p-4 md:p-6 overflow-y-auto ml-0 md:ml-20">
+
+      {/* Main content */}
+      <div className="flex-1 p-4 md:p-6 overflow-y-auto">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
           <h1 className="text-xl md:text-2xl font-bold">
             Admin Dashboard - {activePage.charAt(0).toUpperCase() + activePage.slice(1)}
@@ -55,13 +57,13 @@ const AdminDashboard = ({ user, setPage }: AdminDashboardProps) => {
             Welcome, {user?.username || "Admin"}
           </div>
         </div>
-        
+
         {error && (
           <div className="bg-red-500 text-white p-2 rounded mb-4">
             {error}
           </div>
         )}
-        
+
         {renderContent()}
       </div>
     </div>

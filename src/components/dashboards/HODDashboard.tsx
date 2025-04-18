@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import Sidebar from "../common/Sidebar";
 import HODStats from "../hod/HODStats";
@@ -17,6 +16,7 @@ import NotificationsManagement from "../hod/NotificationsManagement";
 import ProctorManagement from "../hod/ProctorManagement";
 import Chat from "../common/Chat";
 import Profile from "../common/Profile";
+import { FiBell, FiMoon } from "react-icons/fi";
 
 interface HODDashboardProps {
   user: any;
@@ -70,27 +70,138 @@ const HODDashboard = ({ user, setPage }: HODDashboardProps) => {
     }
   };
 
+  const topbarPages = ["dashboard", "low-attendance", "semesters", "faculty-assignments", "leaves"];
+
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="flex min-h-screen bg-gray-100">
+      {/* Sidebar */}
       <Sidebar role="hod" setPage={handlePageChange} activePage={activePage} />
-      <div className="flex-1 p-4 md:p-6 overflow-y-auto ml-0 md:ml-20">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-          <h1 className="text-xl md:text-2xl font-bold">
-            HOD Dashboard - {activePage.charAt(0).toUpperCase() + activePage.slice(1)}
-          </h1>
-          <div className="text-sm text-gray-600">
-            Welcome, {user?.username || "HOD"}
-            {user?.department && ` | ${user.department}`}
+
+      {/* Main Content */}
+      <div className="ml-64 w-full max-h-screen overflow-y-auto bg-gray-100">
+        {/* Topbar - shown for all pages */}
+        <div className="bg-white shadow-md flex items-center justify-between px-6 py-4 border-b relative w-full">
+          {/* Search bar */}
+          <div className="flex-1 max-w-sm">
+            <input
+              type="text"
+              placeholder="Search faculty, students, subjects..."
+              className="w-full px-4 py-2 rounded-md border border-gray-300 bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Right section */}
+          <div className="flex items-center gap-5">
+            {/* Date & Time */}
+            <div className="text-right text-sm text-gray-600">
+              {new Date().toLocaleDateString("en-US", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })}
+              <div className="text-xs">
+                {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </div>
+
+            {/* Theme toggle icon */}
+            <span className="text-xl cursor-pointer hover:text-gray-500">
+              <FiMoon />
+            </span>
+
+            {/* Notification bell */}
+            <div className="relative cursor-pointer">
+              <FiBell size={24} className="text-xl" />
+              <span className="absolute -top-1 -right-1 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">2</span>
+            </div>
+
+            {/* Profile section */}
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center font-semibold text-sm">
+                H
+              </div>
+              <div className="text-sm">
+                <div className="font-medium">HOD</div>
+                <div className="text-xs text-gray-500">HOD, Computer Science</div>
+              </div>
+            </div>
           </div>
         </div>
-        
-        {error && (
-          <div className="bg-red-500 text-white p-2 rounded mb-4">
-            {error}
+
+        {/* Pages with tab layout */}
+        {topbarPages.includes(activePage) ? (
+          <>
+            {/* Header */}
+            <div className="flex justify-between items-center p-6">
+              <div className="text-3xl font-semibold text-gray-900">HOD Dashboard</div>
+              <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm transition duration-300 ease-in-out transform hover:scale-105">
+                New Announcement
+              </button>
+            </div>
+
+            {/* Tab buttons */}
+            <div className="bg-gray-100 px-6 pt-4 w-full">
+              <div className="flex gap-4 border-b border-gray-300 pb-2">
+                <button
+                  onClick={() => setActivePage("low-attendance")}
+                  className={`px-4 py-2 rounded-t-md text-sm font-medium transition-all ${
+                    activePage === "low-attendance"
+                      ? "bg-blue-500 text-white shadow-md"
+                      : "text-gray-500 hover:text-black hover:bg-blue-100"
+                  }`}
+                >
+                  Low Attendance Students
+                </button>
+                <button
+                  onClick={() => setActivePage("semesters")}
+                  className={`px-4 py-2 rounded-t-md text-sm font-medium transition-all ${
+                    activePage === "semesters"
+                      ? "bg-blue-500 text-white shadow-md"
+                      : "text-gray-500 hover:text-black hover:bg-blue-100"
+                  }`}
+                >
+                  Semester Management
+                </button>
+                <button
+                  onClick={() => setActivePage("faculty-assignments")}
+                  className={`px-4 py-2 rounded-t-md text-sm font-medium transition-all ${
+                    activePage === "faculty-assignments"
+                      ? "bg-blue-500 text-white shadow-md"
+                      : "text-gray-500 hover:text-black hover:bg-blue-100"
+                  }`}
+                >
+                  Faculty Assignments
+                </button>
+                <button
+                  onClick={() => setActivePage("leaves")}
+                  className={`px-4 py-2 rounded-t-md text-sm font-medium transition-all ${
+                    activePage === "leaves"
+                      ? "bg-blue-500 text-white shadow-md"
+                      : "text-gray-500 hover:text-black hover:bg-blue-100"
+                  }`}
+                >
+                  Leave Management
+                </button>
+              </div>
+            </div>
+
+            {/* Tab content */}
+            <div className="p-6 overflow-y-auto flex-1 bg-gray-100">
+              {error && (
+                <div className="bg-red-500 text-white p-2 rounded mb-4">
+                  {error}
+                </div>
+              )}
+              {renderContent()}
+            </div>
+          </>
+        ) : (
+          // Full-screen pages
+          <div className="p-6 w-full">
+            {renderContent()}
           </div>
         )}
-        
-        {renderContent()}
       </div>
     </div>
   );
