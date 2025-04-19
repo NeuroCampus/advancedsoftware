@@ -1,24 +1,57 @@
-
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
-import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Calendar } from "../ui/calendar";
 import { PopoverTrigger, Popover, PopoverContent } from "../ui/popover";
 import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
+import { DateRange } from "react-day-picker";
 
 const SubmitLeaveRequest = () => {
-  const [date, setDate] = useState<Date>();
+  const [dateRange, setDateRange] = useState<DateRange | undefined>();
+  const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!dateRange?.from || !dateRange?.to || !reason.trim()) {
+      alert("Please provide a valid date range and reason.");
+      return;
+    }
+
     setLoading(true);
-    // Add your form submission logic here
-    setTimeout(() => setLoading(false), 1000);
+
+    const body = {
+      start_date: format(dateRange.from, "yyyy-MM-dd"),
+      end_date: format(dateRange.to, "yyyy-MM-dd"),
+      reason: reason.trim(),
+    };
+
+    try {
+      const response = await fetch("/student/submit-leave-request/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to submit leave request.");
+      }
+
+      setSuccess(true);
+      setDateRange(undefined);
+      setReason("");
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -29,20 +62,7 @@ const SubmitLeaveRequest = () => {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="type">Leave Type</Label>
-            <select
-              id="type"
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <option value="medical">Medical Leave</option>
-              <option value="personal">Personal Leave</option>
-              <option value="event">Event Participation</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Date</Label>
+            <Label>Date Range</Label>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -50,14 +70,25 @@ const SubmitLeaveRequest = () => {
                   className="w-full justify-start text-left font-normal"
                 >
                   <CalendarIcon className="mr-2 h-4 w-4" />
-                  {date ? format(date, "PPP") : <span>Pick a date</span>}
+                  {dateRange?.from ? (
+                    dateRange.to ? (
+                      <>
+                        {format(dateRange.from, "PPP")} -{" "}
+                        {format(dateRange.to, "PPP")}
+                      </>
+                    ) : (
+                      format(dateRange.from, "PPP")
+                    )
+                  ) : (
+                    <span>Pick a date range</span>
+                  )}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0">
                 <Calendar
-                  mode="single"
-                  selected={date}
-                  onSelect={setDate}
+                  mode="range"
+                  selected={dateRange}
+                  onSelect={setDateRange}
                   initialFocus
                 />
               </PopoverContent>
@@ -65,30 +96,26 @@ const SubmitLeaveRequest = () => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="duration">Duration (Days)</Label>
-            <Input type="number" id="duration" min="1" max="30" />
-          </div>
-
-          <div className="space-y-2">
             <Label htmlFor="reason">Reason</Label>
             <Textarea
               id="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
               placeholder="Please provide a detailed reason for your leave request"
               className="min-h-[100px]"
+              required
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="document">Supporting Document (if any)</Label>
-            <Input type="file" id="document" className="cursor-pointer" />
-            <p className="text-sm text-muted-foreground">
-              Upload any relevant documents (e.g., medical certificate)
-            </p>
           </div>
 
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Submitting..." : "Submit Request"}
           </Button>
+
+          {success && (
+            <p className="text-sm text-green-600">
+              Leave request submitted successfully!
+            </p>
+          )}
         </form>
       </CardContent>
     </Card>

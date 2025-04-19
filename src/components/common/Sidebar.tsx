@@ -92,6 +92,7 @@ const Sidebar = ({ role, setPage, activePage }: SidebarProps) => {
       { name: "Dashboard", page: "dashboard" },
       { name: "Low Attendance", page: "low-attendance" },
       { name: "Semester management", page: "semesters" },
+      { name: "Sections", page: "sections" },
       { name: "Students", page: "students" },
       { name: "Subjects", page: "subjects" },
       { name: "Faculty Assignments", page: "faculty-assignments" },
@@ -123,7 +124,6 @@ const Sidebar = ({ role, setPage, activePage }: SidebarProps) => {
     student: [
       { name: "Dashboard", page: "dashboard" },
       { name: "Timetable", page: "timetable" },
-      { name: "Weekly Schedule", page: "weekly-schedule" },
       { name: "Attendance", page: "attendance" },
       { name: "Internal Marks", page: "marks" },
       { name: "Leave Request", page: "leave-request" },
@@ -134,6 +134,8 @@ const Sidebar = ({ role, setPage, activePage }: SidebarProps) => {
       { name: "Chat", page: "chat" },
       { name: "Notifications", page: "notifications" },
       { name: "Face Recognition", page: "face-recognition" },
+      { name: "Study Material", page: "student-study-material" },
+      { name: "Student Assignments", page: "student-assignment" },
     ]
   }[role] || [];
 

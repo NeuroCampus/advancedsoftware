@@ -7,6 +7,8 @@ import BranchesManagement from "../admin/BranchesManagement";
 import NotificationsManagement from "../admin/NotificationsManagement";
 import HODLeavesManagement from "../admin/HODLeavesManagement";
 import UsersManagement from "../admin/UsersManagement";
+import Navbar from "../common/Navbar";
+
 
 interface AdminDashboardProps {
   user: any;
@@ -46,9 +48,10 @@ const AdminDashboard = ({ user, setPage }: AdminDashboardProps) => {
     <div className="flex min-h-screen bg-gray-100">
       {/* Sidebar */}
       <Sidebar role="admin" setPage={handlePageChange} activePage={activePage} />
-
+        {/* Navbar */}
+      <Navbar role="admin" user={user} />
       {/* Main content */}
-      <div className="flex-1 p-4 md:p-6 overflow-y-auto">
+      <div className="ml-64 w-full max-h-screen overflow-y-auto bg-gray-100">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
           <h1 className="text-xl md:text-2xl font-bold">
             Admin Dashboard - {activePage.charAt(0).toUpperCase() + activePage.slice(1)}

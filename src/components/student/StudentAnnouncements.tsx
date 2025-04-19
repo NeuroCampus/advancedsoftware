@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import {
   Card,
@@ -10,30 +9,7 @@ import {
 import { Badge } from "../ui/badge";
 import { Megaphone, Bell } from "lucide-react";
 
-// Mock data - replace with actual API data
-const mockAnnouncements = [
-  {
-    id: 1,
-    title: "Mid-Semester Examination Schedule",
-    content:
-      "The mid-semester examinations will commence from April 20th, 2024. The detailed schedule has been published on the notice board.",
-    category: "academic",
-    priority: "high",
-    date: "2024-04-05",
-    from: "Examination Department",
-  },
-  {
-    id: 2,
-    title: "Annual Sports Meet Registration",
-    content:
-      "Registrations for the Annual Sports Meet are now open. Interested students can register at the Sports Department.",
-    category: "sports",
-    priority: "medium",
-    date: "2024-04-03",
-    from: "Sports Department",
-  },
-];
-
+// Style maps for optional fields (if backend expands later)
 const categoryStyles = {
   academic: "bg-blue-500",
   sports: "bg-green-500",
@@ -47,15 +23,35 @@ const priorityStyles = {
   low: "bg-green-500",
 };
 
+interface Announcement {
+  title: string;
+  content: string;
+  created_at: string;
+  category?: string;
+  priority?: string;
+  from?: string;
+}
+
 const StudentAnnouncements = () => {
-  const [announcements, setAnnouncements] = useState(mockAnnouncements);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false);
-    }, 1000);
+    const fetchAnnouncements = async () => {
+      try {
+        const response = await fetch("/student/announcements/");
+        const json = await response.json();
+        if (json.success && Array.isArray(json.data)) {
+          setAnnouncements(json.data);
+        }
+      } catch (error) {
+        console.error("Failed to fetch announcements:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAnnouncements();
   }, []);
 
   if (loading) {
@@ -80,9 +76,9 @@ const StudentAnnouncements = () => {
         </CardHeader>
         <CardContent>
           <div className="space-y-6">
-            {announcements.map((announcement) => (
+            {announcements.map((announcement, idx) => (
               <div
-                key={announcement.id}
+                key={idx}
                 className="rounded-lg border p-4 hover:bg-accent transition-colors"
               >
                 <div className="flex items-start justify-between gap-4">
@@ -102,23 +98,23 @@ const StudentAnnouncements = () => {
                       {announcement.content}
                     </p>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{announcement.from}</span>
+                      <span>{announcement.from || "Admin Office"}</span>
                       <span>•</span>
-                      <span>{announcement.date}</span>
+                      <span>{announcement.created_at}</span>
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  {announcement.category && (
                     <Badge
                       variant="secondary"
                       className={`${
                         categoryStyles[
                           announcement.category as keyof typeof categoryStyles
-                        ]
+                        ] || "bg-gray-400"
                       } text-white`}
                     >
                       {announcement.category}
                     </Badge>
-                  </div>
+                  )}
                 </div>
               </div>
             ))}
