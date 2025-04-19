@@ -1,101 +1,122 @@
-
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { useEffect, useState } from "react";
 import { Badge } from "../ui/badge";
+import { Bell, CheckCircle2, Clock3, XCircle } from "lucide-react";
+import { Button } from "../ui/button";
 
-// Mock data - replace with actual API data
-const mockLeaveRequests = [
-  {
-    id: 1,
-    type: "Medical",
-    from: "2024-04-01",
-    days: 2,
-    status: "Approved",
-    approvedBy: "Dr. Smith",
-    requestedOn: "2024-03-30",
-  },
-  {
-    id: 2,
-    type: "Personal",
-    from: "2024-04-10",
-    days: 1,
-    status: "Pending",
-    requestedOn: "2024-04-08",
-  },
-  {
-    id: 3,
-    type: "Event",
-    from: "2024-03-15",
-    days: 3,
-    status: "Rejected",
-    approvedBy: "Dr. Johnson",
-    requestedOn: "2024-03-12",
-    reason: "Insufficient documentation",
-  },
-];
+type LeaveStatusType = "PENDING" | "APPROVED" | "REJECTED";
 
-const statusStyles = {
-  Approved: "bg-green-500",
-  Pending: "bg-yellow-500",
-  Rejected: "bg-red-500",
+interface LeaveRequest {
+  id: string;
+  title?: string;
+  reason?: string;
+  start_date: string;
+  end_date?: string;
+  applied_on?: string;
+  status: LeaveStatusType;
+}
+
+const statusStyles: Record<
+  LeaveStatusType,
+  { icon: JSX.Element; color: string; bg: string }
+> = {
+  PENDING: {
+    icon: <Clock3 className="w-3.5 h-3.5 text-yellow-500" />,
+    color: "text-yellow-600",
+    bg: "bg-yellow-100",
+  },
+  APPROVED: {
+    icon: <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />,
+    color: "text-green-600",
+    bg: "bg-green-100",
+  },
+  REJECTED: {
+    icon: <XCircle className="w-3.5 h-3.5 text-red-600" />,
+    color: "text-red-600",
+    bg: "bg-red-100",
+  },
 };
 
 const LeaveStatus = () => {
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchLeaves = async () => {
+      try {
+        const res = await fetch("/student/leave-requests/");
+        const data = await res.json();
+        if (data.success) {
+          setLeaves(data.data);
+        }
+      } catch (error) {
+        console.error("Failed to fetch leave requests:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLeaves();
+  }, []);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Leave Requests Status</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-6">
-          {mockLeaveRequests.map((request) => (
+    <div className="bg-white min-h-screen p-6 text-gray-900">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-sm font-semibold">Leave Requests</h2>
+        <Button className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5">
+          <Bell className="w-4 h-4 mr-2" />
+          Apply for Leave
+        </Button>
+      </div>
+
+      {/* Loading State */}
+      {loading ? (
+        <div className="text-sm text-gray-500">Loading leave requests...</div>
+      ) : leaves.length === 0 ? (
+        <div className="text-sm text-gray-500">No leave requests found.</div>
+      ) : (
+        <div className="space-y-4">
+          {leaves.map((item) => (
             <div
-              key={request.id}
-              className="rounded-lg border p-4 hover:bg-accent transition-colors"
+              key={item.id}
+              className="bg-gray-50 border border-gray-200 rounded-md px-4 py-4 shadow-sm"
             >
-              <div className="flex flex-col md:flex-row justify-between gap-4">
-                <div>
-                  <h3 className="font-medium">{request.type} Leave</h3>
-                  <p className="text-sm text-muted-foreground">
-                    From: {request.from} • {request.days} day(s)
+              <div className="flex justify-between items-start">
+                {/* Left Section */}
+                <div className="space-y-1 text-sm">
+                  <p className="font-medium">{item.title ?? "Leave Request"}</p>
+                  <p className="text-xs text-gray-500">
+                    From: {item.start_date}
+                    {item.end_date ? ` To: ${item.end_date}` : ""}
                   </p>
-                  <p className="text-sm text-muted-foreground">
-                    Requested on: {request.requestedOn}
-                  </p>
-                </div>
-                <div className="flex flex-col items-start md:items-end gap-2">
-                  <Badge
-                    variant="secondary"
-                    className={`${statusStyles[request.status as keyof typeof statusStyles]} text-white`}
-                  >
-                    {request.status}
-                  </Badge>
-                  {request.approvedBy && (
-                    <p className="text-sm">
-                      {request.status === "Approved" ? "Approved" : "Rejected"} by:{" "}
-                      {request.approvedBy}
+                  {item.reason && (
+                    <p className="text-xs text-gray-500">{item.reason}</p>
+                  )}
+                  {item.applied_on && (
+                    <p className="text-xs text-gray-400">
+                      Applied on: {item.applied_on}
                     </p>
                   )}
                 </div>
-              </div>
-              {request.reason && (
-                <div className="mt-4 p-3 bg-muted rounded-md">
-                  <p className="text-sm">
-                    <span className="font-medium">Reason: </span>
-                    {request.reason}
-                  </p>
+
+                {/* Right Section */}
+                <div className="flex flex-col items-end gap-2">
+                  <Badge
+                    className={`text-xs font-medium px-2 py-0.5 rounded-full border-none ${statusStyles[item.status].bg} ${statusStyles[item.status].color}`}
+                  >
+                    <div className="flex items-center gap-1">
+                      {statusStyles[item.status].icon}
+                      {item.status.charAt(0) + item.status.slice(1).toLowerCase()}
+                    </div>
+                  </Badge>
+                  <span className="text-xs text-gray-400">#{item.id.slice(0, 6)}</span>
                 </div>
-              )}
+              </div>
             </div>
           ))}
-
-          {mockLeaveRequests.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">
-              No leave requests found
-            </p>
-          )}
         </div>
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 };
 
